@@ -25,6 +25,12 @@ def build_ui() -> gr.Blocks:
 
     with gr.Blocks(title="BalsaNest") as demo:
         parts_state = gr.State([])
+        # Rebuilding the part cards mid-edit invalidates their event ids (the
+        # browser then hits KeyError in the queue), so the cards render from
+        # this separate state, which only changes when the card layout itself
+        # must change: files added/removed, or a units reload that alters a
+        # part's dimensions. Plain field edits touch only parts_state.
+        parts_layout_state = gr.State([])
         viz_state = gr.State({})
         outline_state = gr.State(None)
         stop_state = gr.State({})
@@ -326,7 +332,7 @@ def build_ui() -> gr.Blocks:
             type="filepath",
         )
 
-        @gr.render(inputs=parts_state)
+        @gr.render(inputs=parts_layout_state)
         def render_parts(parts):
             if not parts:
                 return
@@ -340,11 +346,20 @@ def build_ui() -> gr.Blocks:
                     return parts
                 return fn
 
+            def _set_grain(i):
+                def fn(value, parts):
+                    parts = [dict(x) for x in parts]
+                    parts[i]["grain"] = value
+                    return parts, gr.update(visible=value != "free")
+                return fn
+
             def _set_units(i):
                 def fn(value, parts):
                     parts = [dict(x) for x in parts]
                     parts[i]["units"] = value
-                    return reload_with_units(parts, i)
+                    reloaded = reload_with_units(parts, i)
+                    # Dimensions/preview changed, so this one does re-render.
+                    return reloaded, reloaded
                 return fn
 
             for start in range(0, len(parts), 2):
@@ -414,7 +429,8 @@ def build_ui() -> gr.Blocks:
                                         show_progress="hidden",
                                     )
                                     grain.input(
-                                        _set("grain", idx), [grain, parts_state], parts_state,
+                                        _set_grain(idx), [grain, parts_state],
+                                        [parts_state, angle],
                                         show_progress="hidden",
                                     )
                                     angle.change(
@@ -423,12 +439,18 @@ def build_ui() -> gr.Blocks:
                                     )
                                     if p["suffix"] == ".dxf":
                                         units.input(
-                                            _set_units(idx), [units, parts_state], parts_state,
+                                            _set_units(idx), [units, parts_state],
+                                            [parts_state, parts_layout_state],
                                             show_progress="hidden",
                                         )
 
+        def sync_parts_and_layout(file_list, parts):
+            out, files_update = sync_parts(file_list, parts)
+            return out, out, files_update
+
         files.change(
-            sync_parts, [files, parts_state], [parts_state, files],
+            sync_parts_and_layout, [files, parts_state],
+            [parts_state, parts_layout_state, files],
             show_progress="minimal",
         )
 
