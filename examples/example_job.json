@@ -1,0 +1,32 @@
+{
+  "sheet": {
+    "width": 36.0,
+    "height": 3.0,
+    "grain_axis": "x",
+    "margin": 0.05,
+    "spacing": 0.04,
+    "grid_step": 0.04,
+    "passes": 8,
+    "max_sheets": null,
+    "allow_mirror": true,
+    "allow_nesting_in_holes": true
+  },
+  "sample_step": 0.015,
+  "seed": 42,
+  "output": "example_output.svg",
+  "labels": { "enabled": true },
+  "debug_borders": false,
+  "parts": [
+    {
+      "file": "parts/airfoil.svg",
+      "quantity": 10,
+      "grain": "parallel",
+      "grain_angle_deg": 0
+    },
+    {
+      "file": "parts/gusset.svg",
+      "quantity": 8,
+      "grain": "free"
+    }
+  ]
+}

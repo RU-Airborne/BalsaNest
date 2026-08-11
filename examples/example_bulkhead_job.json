@@ -1,0 +1,27 @@
+{
+  "sheet": {
+    "width": 12.0,
+    "height": 4.5,
+    "grain_axis": "x",
+    "margin": 0.05,
+    "spacing": 0.05,
+    "passes": 6,
+    "allow_nesting_in_holes": true
+  },
+  "sample_step": 0.015,
+  "seed": 42,
+  "output": "bulkhead_output.svg",
+  "debug_borders": false,
+  "parts": [
+    {
+      "file": "parts/bulkhead.svg",
+      "quantity": 1,
+      "grain": "free"
+    },
+    {
+      "file": "parts/aileron_rib.svg",
+      "quantity": 6,
+      "grain": "free"
+    }
+  ]
+}

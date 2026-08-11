@@ -1,0 +1,8 @@
+.DS_Store
+Thumbs.db
+desktop.ini
+outputs/
+.venv/
+venv/
+__pycache__/
+*.pyc

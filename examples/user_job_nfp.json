@@ -1,0 +1,13 @@
+{
+  "sheet": {
+    "width": 36.0, "height": 24.0, "grain_axis": "x",
+    "margin": 0.05, "spacing": 0.05, "passes": 4,
+    "use_nfp": true
+  },
+  "output": "user_nest_nfp.svg",
+  "parts": [
+    {"file": "parts/tailrudderribs2.svg", "quantity": 4, "grain": "free"},
+    {"file": "parts/Martini_Support_Front.svg", "quantity": 2, "grain": "free"},
+    {"file": "parts/airborneaftbkhdsmid4.svg", "quantity": 2, "grain": "free"}
+  ]
+}

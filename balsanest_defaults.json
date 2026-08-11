@@ -1,0 +1,31 @@
+{
+  "sheet": {
+    "width": 32.0,
+    "height": 18.0,
+    "grain_axis": "x",
+    "margin": 0.05,
+    "spacing": 0.04,
+    "grid_step": 0.04,
+    "passes": 8,
+    "max_sheets": null,
+    "allow_mirror": true,
+    "allow_nesting_in_holes": true,
+    "min_hole_area": 0.02
+  },
+  "sample_step": 0.015,
+  "seed": 42,
+  "cut_color": "#ff0000",
+  "cut_stroke": "hairline",
+  "labels": {
+    "enabled": true,
+    "mode": "raster",
+    "color": "#000000",
+    "outline_color": "#0000ff",
+    "min_font_in": 0.06,
+    "max_font_in": 0.5,
+    "max_lines": 4,
+    "align_bands": true
+  },
+  "group_labels_with_parts": true,
+  "debug_borders": false
+}

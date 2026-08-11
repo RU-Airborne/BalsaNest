@@ -1,0 +1,47 @@
+{
+  "sheet": {
+    "width": 36.0,
+    "height": 36.0,
+    "grain_axis": "x",
+    "margin": 0.05,
+    "spacing": 0.04,
+    "grid_step": 0.04,
+    "passes": 8
+  },
+  "sample_step": 0.015,
+  "seed": 42,
+  "output": "laser_stress_nfp.svg",
+  "debug_borders": false,
+  "parts": [
+    {
+      "file": "parts/tailrudderribs2.svg",
+      "quantity": 6,
+      "grain": "parallel"
+    },
+    {
+      "file": "parts/Martini_Support_Front.svg",
+      "quantity": 2,
+      "grain": "parallel"
+    },
+    {
+      "file": "parts/airborneaftbkhdsmid4.svg",
+      "quantity": 2,
+      "grain": "parallel"
+    },
+    {
+      "file": "parts/tail_vertical_ribsbottomtailbox.svg",
+      "quantity": 4,
+      "grain": "parallel"
+    },
+    {
+      "file": "parts/tail_vertical_ribsouter.svg",
+      "quantity": 2,
+      "grain": "parallel"
+    },
+    {
+      "file": "parts/Wing_Top_RootRib2.svg",
+      "quantity": 4,
+      "grain": "parallel"
+    }
+  ]
+}

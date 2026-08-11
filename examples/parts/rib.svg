@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="4.5in" height="0.75in"
+     viewBox="0 0 432 72">
+  <path d="M 0,36
+           C 70,5 170,0 260,8
+           C 330,14 390,24 432,36
+           C 390,48 330,58 260,64
+           C 170,72 70,67 0,36 Z"/>
+  <ellipse cx="145" cy="36" rx="45" ry="18"/>
+  <ellipse cx="275" cy="36" rx="45" ry="18"/>
+</svg>
