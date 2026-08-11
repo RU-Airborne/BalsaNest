@@ -3,10 +3,11 @@ BalsaNest arranges part drawings on wood sheets. It packs parts closely to reduc
 grain orientation where you specify it, engraves part names, and writes SVG files. All dimensions
 are in inches.
 
-  <figure style="text-align: center;">
-    <img src="docs/example_nest.png" alt="Example of a nested sheet produced by BalsaNest">
-    <figcaption><em>Example of a nested sheet produced by BalsaNest.</em></figcaption>
-  </figure>
+<p align="center">
+  <img src="docs/example_nest.png" alt="Example of a nested sheet produced by BalsaNest", width="600">
+  <br>
+  <em>Example of a nested sheet produced by BalsaNest.</em>
+</p>
 
 ### Why grain matters
 
@@ -71,15 +72,17 @@ they pack with full rotation freedom.
   outline drawing or painting its shape on a canvas. Interior holes count as blocked areas, the edge margin
   follows the outline, and parts tuck into its slanted corners.
 
-  <figure style="text-align: center;">
-    <img src="docs/custom_drawing.png" alt="Odd-shaped stock usable area">
-    <figcaption><em>Define the usable area of the sheet directly on the canvas.</em></figcaption>
-  </figure>
+<p align="center">
+  <img src="docs/custom_drawing.png" alt="Odd-shaped stock usable area" width="600">
+  <br>
+  <em>Define the usable area of the sheet directly on the canvas.</em>
+</p>
 
-  <figure style="text-align: center;">
-    <img src="docs/custom_sheet.png" alt="Parts nested within usable area">
-    <figcaption><em>Parts are placed only within the defined usable area.</em></figcaption>
-  </figure>
+<p align="center">
+  <img src="docs/custom_sheet.png" alt="Parts nested within usable area" width="600">
+  <br>
+  <em>Parts are placed only within the defined usable area.</em>
+</p>
 
 - **Smart part labels placement to keep raster time short.** Lasers raster
   horizontally and reposition slowly in the vertical direction.
