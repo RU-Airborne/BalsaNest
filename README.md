@@ -21,7 +21,6 @@ they pack with full rotation freedom.
 
 ## Highlights
 
----
 
 - **Easy to use** — drag and drop your CAD exports straight into the browser
   and press Start.
@@ -36,9 +35,9 @@ they pack with full rotation freedom.
 - **Wastes less wood** — small parts are nested inside the cut-out windows of
   bigger ones, and odd-shaped offcuts can be used by drawing or uploading
   their outline.
+  
 ## Features
 
----
 
 - **Three input formats: SVG, DXF, and PDF** — 
   SolidWorks's PDFs exports have the educational
@@ -108,8 +107,6 @@ they pack with full rotation freedom.
 
 ## Install
 
----
-
 You need **Python 3.10 or newer** ([python.org](https://www.python.org/downloads/)).
 Open a terminal in the BalsaNest folder, then:
 
@@ -131,7 +128,6 @@ python -m pip install -r requirements.txt
 
 ## Usage
 
----
 
 Start the app (Windows users can just double-click `run_webui.bat`):
 
@@ -209,8 +205,6 @@ finishes, the Output section holds your files.
 
 ## Using the output
 
----
-
 You get one SVG per sheet plus a JSON summary:
 
 - **Open the SVG in Inkscape first.** Each part is a **group** containing its
@@ -227,13 +221,11 @@ You get one SVG per sheet plus a JSON summary:
 
 ## How it works
 
----
 
 Every internal technical detail is documented in `balsanest_core/README.md`.
 
 ## Notes
 
----
 
 - Nesting results are very good but **not mathematically
   optimal**. Re-running with a different random seed, more passes, or the
