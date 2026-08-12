@@ -17,6 +17,7 @@ from typing import Any, Optional, Sequence
 
 from shapely.affinity import translate as shp_translate
 from shapely.geometry import MultiPolygon, Polygon
+from shapely.geometry import box as shp_box
 from shapely.prepared import prep
 
 from .constants import EPS
@@ -258,14 +259,15 @@ def refined_placement_key(
 
 
 def _cap_axis_lines(values: set[float], lower: float, upper: float, cap: int) -> list[float]:
-    """Contact lines within the legal range, bounded to ``cap`` entries. Keeps
-    the origin-side lines (where compaction wants parts) plus the frontier few
-    (so a new shelf can start), so the candidate product cannot explode."""
+    """Contact lines within the legal range, bounded to ``cap`` entries. When
+    over the cap, subsample evenly across the sorted range: a dense vertex
+    cluster (e.g. the curvy bite a previous nest left in a re-imported scrap
+    sheet) must not crowd every kept line into one corner of the sheet."""
     legal = sorted({round(v, 8) for v in values if lower - EPS <= v <= upper + EPS})
     if len(legal) <= cap:
         return legal
-    keep_front = max(4, cap // 8)
-    return legal[: cap - keep_front] + legal[-keep_front:]
+    idx = {round(i * (len(legal) - 1) / (cap - 1)) for i in range(cap)}
+    return [legal[i] for i in sorted(idx)]
 
 
 def candidate_coordinates(
@@ -280,12 +282,20 @@ def candidate_coordinates(
 
     # Polygonal sheets: the usable region's vertices are the contact corners a
     # part can tuck into (the origin corner may not even be inside the sheet).
+    # Curvy outlines (a re-imported scrap sheet) carry thousands of sampled
+    # vertices, so simplify first -- the corners survive, the curve samples
+    # collapse, and candidates spread over the whole sheet.
     region_info = sheet_usable_region(sheet)
     if region_info is not None:
         region = region_info[0]
         polys = region.geoms if isinstance(region, MultiPolygon) else [region]
         for poly in polys:
-            for vx, vy in poly.exterior.coords:
+            ring = poly.exterior
+            if len(ring.coords) > 120:
+                simplified = poly.simplify(max(sheet.grid_step, 0.02))
+                if not simplified.is_empty and simplified.exterior is not None:
+                    ring = simplified.exterior
+            for vx, vy in ring.coords:
                 xs.update({vx, vx - variant.width})
                 ys.update({vy, vy - variant.height})
 
@@ -665,9 +675,23 @@ def find_placement(
 
         # Fallback raster-like search for positions the contact candidates miss
         # (mostly relevant on a fresh sheet). Bounded by the evaluation budget.
+        # On polygonal sheets, points whose bounding box leaves the usable
+        # region are rejected with a cheap prepared-geometry test that does NOT
+        # consume the budget -- otherwise a big blocked area (the bite in a
+        # re-imported scrap sheet) burns the whole budget before the sweep
+        # reaches open material. bbox containment is sufficient but not
+        # necessary, so this can only skip spots the contact/NFP candidates
+        # are responsible for anyway.
+        region_prepared = (
+            sheet_usable_region(sheet)[1] if sheet.boundary is not None else None
+        )
         for x, y in grid_coordinates(variant, sheet):
             if evals >= eval_budget:
                 break
+            if region_prepared is not None and not region_prepared.contains(
+                shp_box(x, y, x + variant.width, y + variant.height)
+            ):
+                continue
             geom = shp_translate(variant.geometry, xoff=x, yoff=y)
             evals += 1
             if sheet.boundary is not None and not geometry_fits_sheet(geom, sheet):
@@ -902,8 +926,46 @@ def polish_layout(result: LayoutResult, sheet: SheetSpec, sweeps: int = 2) -> La
             still_unplaced.append(item)
     result.unplaced = still_unplaced
 
+    for layout in result.sheets:
+        _snap_cluster_to_margin(layout, sheet)
+
     result.score = score_layout(result.sheets, sheet, len(result.unplaced))
     return result
+
+
+def _snap_cluster_to_margin(layout: SheetLayout, sheet: SheetSpec) -> None:
+    """Translate the finished cluster so it touches the margin corner.
+
+    The packing score is bounding-box area, which is position-independent, so
+    a polish sweep can tighten an interlock while the cluster as a whole
+    drifts off the corner -- and nothing else pulls it back. A rigid
+    translation preserves every relative gap, so it is always legal on a
+    rectangular sheet; on a polygonal sheet the snap (then each single axis)
+    is applied only if the moved cluster still fits the usable region."""
+    if not layout.placements:
+        return
+    minx = min(p.geometry.bounds[0] for p in layout.placements)
+    miny = min(p.geometry.bounds[1] for p in layout.placements)
+    for dx, dy in (
+        (sheet.margin - minx, sheet.margin - miny),
+        (sheet.margin - minx, 0.0),
+        (0.0, sheet.margin - miny),
+    ):
+        if abs(dx) < 1e-9 and abs(dy) < 1e-9:
+            return
+        moved = [
+            Placement(
+                p.item, p.variant, p.sheet_index, p.x + dx, p.y + dy,
+                shp_translate(p.geometry, xoff=dx, yoff=dy),
+            )
+            for p in layout.placements
+        ]
+        if sheet.boundary is not None and not all(
+            geometry_fits_sheet(m.geometry, sheet) for m in moved
+        ):
+            continue
+        layout.placements[:] = moved
+        return
 
 
 def heuristic_passes(

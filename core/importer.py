@@ -485,6 +485,52 @@ class PdfPartImporter:
         return paths
 
 
+def _document_size_in(file: Path) -> Optional[tuple[float, float]]:
+    """Physical size of the drawing's page/canvas in inches: the SVG viewBox
+    (or width/height attributes) or the PDF page. None when the format has no
+    document bounds (DXF) or they cannot be determined."""
+    suffix = file.suffix.lower()
+    if suffix == ".dxf":
+        return None
+    if suffix == ".pdf":
+        try:
+            import pymupdf
+
+            doc = pymupdf.open(str(file))
+            try:
+                if doc.page_count < 1:
+                    return None
+                rect = doc[0].rect
+                w = float(rect.width) * _PDF_POINTS_TO_INCH
+                h = float(rect.height) * _PDF_POINTS_TO_INCH
+            finally:
+                doc.close()
+            return (w, h) if w > 0 and h > 0 else None
+        except Exception:
+            return None
+    from .svg_geometry import (
+        parse_svg_length_inches,
+        parse_viewbox,
+        source_scale_from_svg,
+    )
+
+    try:
+        root = ET.parse(file).getroot()
+    except ET.ParseError:
+        return None
+    viewbox = parse_viewbox(root)
+    if viewbox is not None:
+        _, _, units_to_in = source_scale_from_svg(root, file)
+        _, _, vb_w, vb_h = viewbox
+        w, h = vb_w * units_to_in, vb_h * units_to_in
+        return (w, h) if w > 0 and h > 0 else None
+    w = parse_svg_length_inches(root.get("width"))
+    h = parse_svg_length_inches(root.get("height"))
+    if w and h and w > 0 and h > 0:
+        return w, h
+    return None
+
+
 def load_sheet_boundary(
     file: Path, sample_step_in: float, units: Optional[str] = None
 ) -> tuple[Any, float, float]:
@@ -493,8 +539,13 @@ def load_sheet_boundary(
 
     The file is imported exactly like a part; the largest closed region becomes
     the sheet outline (interior rings are kept as blocked areas -- defects or
-    pre-existing holes in the stock). Returns (polygon, width_in, height_in)
-    with the polygon normalized so its bounding box starts at (0, 0)."""
+    pre-existing holes in the stock). Returns (polygon, width_in, height_in).
+
+    When the file declares a page/canvas size (SVG viewBox, PDF page), that
+    size becomes the sheet width/height and the outline keeps its drawn
+    position on the page, so laser alignment matches the original document.
+    DXF has no page, so the sheet falls back to the outline's bounding box
+    with the polygon normalized to start at (0, 0)."""
     req = PartRequest(file=Path(file), quantity=1, grain="free", units=units)
     part = load_part(req, sample_step_in)
     islands = _solid_islands(part.geometry)
@@ -504,6 +555,29 @@ def load_sheet_boundary(
             f"contain one closed contour enclosing the usable material."
         )
     boundary = max(islands, key=lambda g: g.area)
+
+    doc_size = _document_size_in(Path(file))
+    if doc_size is not None:
+        doc_w, doc_h = doc_size
+        # Undo the part-loader normalization to restore the page position.
+        placed = shp_translate(
+            boundary, xoff=part.base_min_x_in, yoff=part.base_min_y_in
+        )
+        bx0, by0, bx1, by1 = placed.bounds
+        tol = 1e-6
+        if bx0 < -tol or by0 < -tol or bx1 > doc_w + tol or by1 > doc_h + tol:
+            from shapely.geometry import box as shp_box
+
+            clipped = placed.intersection(shp_box(0.0, 0.0, doc_w, doc_h))
+            clipped_islands = _solid_islands(clipped)
+            placed = (
+                max(clipped_islands, key=lambda g: g.area)
+                if clipped_islands
+                else None
+            )
+        if placed is not None and not placed.is_empty:
+            return placed, doc_w, doc_h
+
     minx, miny, maxx, maxy = boundary.bounds
     boundary = shp_translate(boundary, xoff=-minx, yoff=-miny)
     return boundary, maxx - minx, maxy - miny

@@ -1,5 +1,100 @@
 # BalsaNest
 
+## Project files
+
+```text
+webui.py                       # web UI launcher (python webui.py)
+balsanest.py                   # terminal CLI launcher
+run_webui.bat                  # Windows double-click launcher (web UI)
+run_balsanest.bat              # Windows double-click launcher (wizard)
+requirements.txt
+balsanest_defaults.json        # machine/shop defaults (every parameter listed)
+core/                          # the nesting library, one module per concern
+  __init__.py                  #   public API + module map
+  errors.py                    #   BalsaNestError
+  constants.py                 #   units, namespaces, tunables
+  models.py                    #   dataclasses: SheetSpec, Variant, Placement, ...
+  svg_geometry.py              #   SVG<->shapely math, mirroring, transforms
+  importer.py                  #   Svg/Dxf/Pdf importers + load_sheet_boundary
+  variants.py                  #   grain rules -> orientation set
+  holes.py                     #   scrap cut-out detection + nesting
+  nfp.py                       #   no-fit-polygon exact-contact candidates
+  packing.py                   #   greedy engine: collision, compaction, passes
+  ga.py                        #   genetic algorithm over the insertion order
+  capacity.py                  #   up-front oversize / capacity checks
+  labels.py                    #   raster-band label planning
+  output.py                    #   SvgSheetWriter, kerf offset, cut order,
+                               #   scrap outlines + JSON summary
+  config.py                    #   JSON job -> JobSpec
+  cli.py                       #   wizard, argument parsing, run_job, main
+web/                           # the Gradio web UI, split by concern
+  previews.py                  #   thumbnails, rulers, drawing grid, sheet views
+  parts.py                     #   upload-list state
+  sheets.py                    #   custom sheet shapes (upload / trace a drawing)
+  jobs.py                      #   save/load a whole session as one job file
+  fonts.py                     #   installed-font scan + measured width ratios
+  nesting.py                   #   the streaming run_nest generator
+  assets.py                    #   theme, CSS, dark-mode JS, legend graphics
+  ui.py                        #   build_ui(): layout + event wiring
+examples/
+  *.json                       # ready-made job configs
+  parts/                       # real + synthetic part drawings (SVG / DXF)
+docs/                          # README assets (example nest image)
+outputs/                       # generated nests land here (gitignored)
+tests/
+  test_core.py                 # the test suite across the whole pipeline
+```
+
+### Architecture
+
+```
+ part files (.svg .dxf .pdf)          job config / web settings
+            |                                    |
+            v                                    v
+   +------------------+               +--------------------+
+   |  importer.py     |               |  config.py         |
+   |  svg_geometry.py |               |  models.py         |
+   +--------+---------+               +---------+----------+
+            | LoadedPart (exact paths +         | SheetSpec / OutputOptions
+            | shapely collision geometry)       | (optional polygon boundary)
+            v                                   v
+   +----------------------------------------------------------+
+   | variants.py   grain rules -> allowed orientations        |
+   | capacity.py   up-front fit checks                        |
+   +----------------------------------------------------------+
+   |                     nesting engine                       |
+   |  packing.py   greedy engine: pack_in_order,              |
+   |               heuristic_passes, polish_layout            |
+   |  ga.py        genetic algorithm over insertion order     |
+   |  nfp.py       no-fit-polygon exact-contact seeds         |
+   |  holes.py     scrap-hole / concave-pocket nesting        |
+   +---------------------------+------------------------------+
+                               | LayoutResult (placements)
+                               v
+   +----------------------------------------------------------+
+   |  labels.py    raster-band label planning                 |
+   |  output.py    laser SVG sheets + JSON summary            |
+   +---------------------------+------------------------------+
+                               v
+        front-ends:  webui.py (balsanest_web/ package)
+                     balsanest.py (cli.py terminal wizard)
+```
+
+
+Each stage is a module with a single responsibility, wired together only through
+the dataclasses in `models.py`, so a module can be changed or replaced in
+isolation. Importers share one seam: `SvgPartImporter`, `DxfPartImporter` and
+`PdfPartImporter` all expose the same `load()` and converge on svgpathtools
+paths (`load_sheet_boundary` reuses them for stock outlines). The optimisers
+share another: `pack_in_order` is the greedy evaluation primitive, consumed by
+the multi-pass heuristic (`heuristic_passes` / `optimize_layout`) and the
+genetic algorithm (`ga_generations` / `optimize_layout_ga`) alike — both are
+generators so front-ends can stream a live preview per pass/generation. Two
+front-ends exist today: the terminal CLI (`cli.py`) and the Gradio web UI
+(`webui.py`); anything new only needs to build a `JobSpec` and call `run_job`
+or drive the same pipeline functions directly.
+
+
 ## Current features
 
 - takes **SVG, DXF, or PDF** part drawings exported at physical scale
@@ -41,14 +136,28 @@
   order live until stopped;
 - supports **non-rectangular stock**: a polygon sheet outline (uploaded as
   SVG/DXF/PDF or painted by hand in the web UI) with interior holes treated as
-  blocked areas;
+  blocked areas — the outline keeps its drawn position on its page, and the
+  page size becomes the sheet size, so layouts line up with the physical
+  board. Candidate seeding simplifies dense curvy outlines first (a
+  re-imported scrap sheet carries thousands of sampled vertices), so packing
+  spreads over the whole usable region instead of crowding one corner;
 - optional **common-line merging**: with part spacing 0, an edge shared by two
-  touching parts is cut once instead of twice;
+  touching parts is cut once instead of twice (with kerf compensation on, a
+  spacing equal to the kerf merges the offset lines on the gap's midline);
+- optional **kerf compensation** (`kerf_in`): cut paths are offset outward by
+  half the beam width (outlines grow, holes shrink) so finished parts match
+  the drawing exactly;
+- **cut-order optimization**: within a part, smaller contours (holes) are cut
+  before the outline that would free the part; across the sheet, parts are
+  emitted in a nearest-neighbour order from the origin to cut head travel;
+- exports the **leftover material of each sheet** (`save_scrap_outlines`) as
+  an outline SVG at the sheet's page size, ready to reuse as custom stock;
 - automatically creates additional stock sheets if everything cannot fit on one;
 - writes physical-size SVG output on three layers:
   - **Cut** — no fill, full red `#ff0000`, `1 px` stroke;
-  - **Raster labels** — each part's file-name engraved in black, horizontal, and
-    aligned onto shared rows so the laser head travels less;
+  - **Raster labels** — each part's file-name engraved in blue by default,
+    horizontal, in a configurable font, and aligned onto shared rows so the
+    laser head travels less;
   - **Debug** (optional) — blue bounding boxes + sheet outline for inspection;
   - 96 px/in viewBox throughout;
 - emits a JSON summary with placements, rotation/mirror state, footprint, nested
@@ -58,7 +167,7 @@
 
 The packing engine proposes candidate positions from **true no-fit polygons** (exact-contact geometry, always on). The placement *order* is a greedy multi-pass **heuristic** by default; an optional SVGnest-style **genetic algorithm** (`optimize_layout_ga`, selectable as the optimizer in the web UI) evolves the insertion order for tighter nests at the cost of much longer runtimes. Neither is a mathematically guaranteed globally optimal nest.
 
-The output writer can optionally **merge common cut lines** (`"merge_common_cuts": true`, or the toggle in the web UI): with part spacing 0, an edge shared by two touching parts is cut once instead of twice. Only exactly coincident segments merge.
+The output writer can optionally **merge common cut lines** (`"merge_common_cuts": true`, or the toggle in the web UI): with part spacing 0, an edge shared by two touching parts is cut once instead of twice. Only exactly coincident segments merge. With kerf compensation on, coincidence instead happens at spacing = kerf: each outline grows half a kerf into the gap, so both beam centrelines land on the gap's midline and merge — and both parts still come out exact.
 
 Importers: **SVG**, **DXF**, and **PDF** (SolidWorks can export DXF or PDF
 directly, skipping the Inkscape conversion step entirely). DWG is a proprietary
@@ -81,17 +190,23 @@ red accent). The page is four sections:
   toggle (on by default) shows part bboxes, margins, scrap cut-outs and
   pockets, and can be flipped at any moment — even mid-run.
 - **Output** — download the laser-ready SVGs + JSON summary (real hairline
-  strokes; the visualizer uses thickened preview strokes).
+  strokes; the visualizer uses thickened preview strokes), plus optional
+  cuts-only twins and leftover-material outlines per sheet. Warnings (red)
+  and notes (amber) from the run appear underneath.
+- **Save and load job** — one JSON file bundling the part drawings themselves
+  plus every setting; loading restores the whole session.
 - **Settings** — three columns: sheet (dimensions, grain direction with wood
   thumbnails, and a **custom sheet shape** sub-section where you upload an
   outline or paint one on a graph-paper canvas in a floating window), nesting
   (optimizer choice, passes/generations, mirroring, hole-nesting, partial
   results, advanced fine-tuning), and output/laser conventions (labels with a
-  raster-vs-outline sample, colours, hairline / px / inch cut strokes,
-  common-line merging).
+  raster-vs-outline sample and a font dropdown listing every installed font
+  with a live preview, colours, hairline / px / inch cut strokes, kerf
+  compensation with a picture legend, common-line merging).
 - **Parts** — drag-and-drop SVG/DXF/PDF files; each becomes a card with a
   vector thumbnail, measured size in inches, quantity slider, grain alignment
-  radio (with a picture legend), and a DXF unit override when needed.
+  radio (with a picture legend), a DXF unit override when needed, and a
+  remove button.
 
 Flags: `--port`, `--host` (use `0.0.0.0` to reach it from another machine),
 `--share` for a temporary public Gradio link, `--no-browser`.
@@ -158,7 +273,7 @@ Example:
     "margin": 0.05,
     "spacing": 0.04,
     "grid_step": 0.04,
-    "passes": 8,
+    "passes": 5,
     "max_sheets": null,
     "allow_mirror": true,
     "allow_nesting_in_holes": true,
@@ -193,7 +308,7 @@ Example:
 | `allow_mirror` | `true` | Allow mirrored/flipped orientations (grain is preserved). Doubles the useful orientations for asymmetric parts. |
 | `allow_nesting_in_holes` | `true` | Allow small parts to be placed inside larger parts' scrap cut-outs. |
 | `min_hole_area` | `0.02` | in²; ignore cut-outs smaller than this when hole-nesting. |
-| `outline_file` | – | Optional non-rectangular stock: an SVG/DXF/PDF drawing whose largest closed contour becomes the sheet shape (its size overrides `width`/`height`; interior contours mark blocked holes/defects). In the web UI you can also upload this file or paint the shape directly on a canvas. |
+| `outline_file` | – | Optional non-rectangular stock: an SVG/DXF/PDF drawing whose largest closed contour becomes the sheet shape (interior contours mark blocked holes/defects). The file's page size overrides `width`/`height` and the shape keeps its drawn position on the page; DXF has no page, so the shape's bounding box is used instead. In the web UI you can also upload this file or paint the shape directly on a canvas. |
 
 ### Machine defaults file
 
@@ -232,14 +347,21 @@ delete nothing.
 ### Part-name raster labels
 
 Every placed part is engraved with its source file name (without extension) in
-**black** on the `Raster labels` layer. Key properties:
+**blue** (default, editable) on the `Raster labels` layer. Key properties:
 
-- **Always inside the material.** The label is anchored at the part's *pole of
-  inaccessibility* (the interior point farthest from every edge and hole) and its
-  size is grown only as far as the whole text block still passes an actual
-  containment test. It can never spill past the outline, cross a cut-out, or run
-  off the sheet — including on tapered airfoils and thin bulkhead frames.
+- **Always inside the material.** Several anchor points are tried — the part's
+  *pole of inaccessibility* (the interior point farthest from every edge and
+  hole) plus a representative point of each lobe left after eroding the shape
+  at a few depths — and the anchor allowing the largest font wins; the block
+  is then recentred in its free space and grown again. Size only grows as far
+  as the whole text block still passes an actual containment test, so it can
+  never spill past the outline, cross a cut-out, or run off the sheet —
+  including on tapered airfoils and thin bulkhead frames.
 - **Adaptive font**, sized to the *part*, not just the local material width.
+- **Any installed font family** — the web UI measures the chosen font file's
+  real average character advance, so the fit estimate matches what the
+  renderer will draw; unknown fonts fall back to a conservative built-in
+  table.
 - **Multi-line** wrapping when that yields a larger, legible font. Multi-word
   names break on word boundaries (`aileron_rib` → `aileron` / `rib`); a single
   word stays on one line unless it genuinely cannot fit.
@@ -357,6 +479,12 @@ knowledge of everyone else's final position, keeping only moves that strictly
 shrink the layout score. This is how parts placed early — before pockets and
 scrap holes existed — migrate into them afterwards.
 
+The layout score is bounding-box area, which is position-independent, so a
+polish sweep can tighten an interlock while the cluster as a whole drifts off
+the corner. The pass therefore ends by **snapping each sheet's cluster back to
+the margin corner** — a rigid translation that preserves every gap, applied on
+polygonal sheets only when the moved cluster still fits the usable region.
+
 ### Compact footprint objective
 
 The packer's primary ranking criterion for every candidate position is the area
@@ -447,7 +575,7 @@ non-cutting **Debug** layer.)
 | colour | meaning | stroke |
 | --- | --- | --- |
 | red `#ff0000` | cut | **hairline** (`~0.001 in`, Inkscape `-inkscape-stroke:hairline`) |
-| black `#000000` | raster engrave (default label mode) | filled text, no stroke |
+| blue `#0000ff` | raster engrave (default label mode) | filled text, no stroke |
 | blue `#0000ff` | outline engrave (optional label mode, much faster) | hairline |
 
 The document opens in Inkscape showing **inches at 1:1 scale** (a
@@ -460,13 +588,14 @@ Everything is configurable for other machines:
 {
   "cut_color": "#ff0000",
   "cut_stroke": "hairline",          // or a number = stroke width in px
-  "labels": { "mode": "raster", "color": "#000000", "outline_color": "#0000ff" },
+  "kerf_in": 0.0,                    // beam width; cut paths offset outward by half
+  "labels": { "mode": "raster", "font": "sans-serif", "color": "#0000ff", "outline_color": "#0000ff" },
   "group_labels_with_parts": true
 }
 ```
 
-Set `"labels": {"mode": "outline"}` for blue hairline outline-engraved names
-instead of black raster fills — outline engraving is far faster.
+Set `"labels": {"mode": "outline"}` for hairline outline-engraved names
+instead of raster fills — outline engraving is far faster.
 
 ### Part + label grouping
 
@@ -516,95 +645,3 @@ Default:
 ```
 
 A smaller grid can find tighter layouts at the cost of runtime.
-
-
-## Project files
-
-```text
-webui.py                       # web UI launcher (python webui.py)
-balsanest.py                   # terminal CLI launcher
-run_webui.bat                  # Windows double-click launcher (web UI)
-run_balsanest.bat              # Windows double-click launcher (wizard)
-requirements.txt
-balsanest_defaults.json        # machine/shop defaults (every parameter listed)
-balsanest_core/                # the nesting library, one module per concern
-  __init__.py                  #   public API + module map
-  errors.py                    #   BalsaNestError
-  constants.py                 #   units, namespaces, tunables
-  models.py                    #   dataclasses: SheetSpec, Variant, Placement, ...
-  svg_geometry.py              #   SVG<->shapely math, mirroring, transforms
-  importer.py                  #   Svg/Dxf/Pdf importers + load_sheet_boundary
-  variants.py                  #   grain rules -> orientation set
-  holes.py                     #   scrap cut-out detection + nesting
-  nfp.py                       #   no-fit-polygon exact-contact candidates
-  packing.py                   #   greedy engine: collision, compaction, passes
-  ga.py                        #   genetic algorithm over the insertion order
-  capacity.py                  #   up-front oversize / capacity checks
-  labels.py                    #   raster-band label planning
-  output.py                    #   SvgSheetWriter + JSON summary
-  config.py                    #   JSON job -> JobSpec
-  cli.py                       #   wizard, argument parsing, run_job, main
-balsanest_web/                 # the Gradio web UI, split by concern
-  previews.py                  #   thumbnails, rulers, drawing grid, sheet views
-  parts.py                     #   upload-list state
-  sheets.py                    #   custom sheet shapes (upload / trace a drawing)
-  nesting.py                   #   the streaming run_nest generator
-  assets.py                    #   theme, CSS, dark-mode JS, legend graphics
-  ui.py                        #   build_ui(): layout + event wiring
-examples/
-  *.json                       # ready-made job configs
-  parts/                       # real + synthetic part drawings (SVG / DXF)
-docs/                          # README assets (example nest image)
-outputs/                       # generated nests land here (gitignored)
-tests/
-  test_core.py                 # the test suite across the whole pipeline
-```
-
-### Architecture
-
-```
- part files (.svg .dxf .pdf)          job config / web settings
-            |                                    |
-            v                                    v
-   +------------------+               +--------------------+
-   |  importer.py     |               |  config.py         |
-   |  svg_geometry.py |               |  models.py         |
-   +--------+---------+               +---------+----------+
-            | LoadedPart (exact paths +         | SheetSpec / OutputOptions
-            | shapely collision geometry)       | (optional polygon boundary)
-            v                                   v
-   +----------------------------------------------------------+
-   | variants.py   grain rules -> allowed orientations        |
-   | capacity.py   up-front fit checks                        |
-   +----------------------------------------------------------+
-   |                     nesting engine                       |
-   |  packing.py   greedy engine: pack_in_order,              |
-   |               heuristic_passes, polish_layout            |
-   |  ga.py        genetic algorithm over insertion order     |
-   |  nfp.py       no-fit-polygon exact-contact seeds         |
-   |  holes.py     scrap-hole / concave-pocket nesting        |
-   +---------------------------+------------------------------+
-                               | LayoutResult (placements)
-                               v
-   +----------------------------------------------------------+
-   |  labels.py    raster-band label planning                 |
-   |  output.py    laser SVG sheets + JSON summary            |
-   +---------------------------+------------------------------+
-                               v
-        front-ends:  webui.py (balsanest_web/ package)
-                     balsanest.py (cli.py terminal wizard)
-```
-
-
-Each stage is a module with a single responsibility, wired together only through
-the dataclasses in `models.py`, so a module can be changed or replaced in
-isolation. Importers share one seam: `SvgPartImporter`, `DxfPartImporter` and
-`PdfPartImporter` all expose the same `load()` and converge on svgpathtools
-paths (`load_sheet_boundary` reuses them for stock outlines). The optimisers
-share another: `pack_in_order` is the greedy evaluation primitive, consumed by
-the multi-pass heuristic (`heuristic_passes` / `optimize_layout`) and the
-genetic algorithm (`ga_generations` / `optimize_layout_ga`) alike — both are
-generators so front-ends can stream a live preview per pass/generation. Two
-front-ends exist today: the terminal CLI (`cli.py`) and the Gradio web UI
-(`webui.py`); anything new only needs to build a `JobSpec` and call `run_job`
-or drive the same pipeline functions directly.

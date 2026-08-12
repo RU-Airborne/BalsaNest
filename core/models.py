@@ -17,7 +17,7 @@ class SheetSpec:
     margin: float = 0.05
     spacing: float = 0.04
     grid_step: float = 0.04
-    passes: int = 8
+    passes: int = 5
     max_sheets: Optional[int] = None
     allow_mirror: bool = True
     compact: bool = True
@@ -46,11 +46,11 @@ class SheetSpec:
             bx0, by0, bx1, by1 = self.boundary.bounds
             tol = 1e-3
             if (
-                abs(bx0) > tol or abs(by0) > tol
-                or abs(bx1 - self.width) > tol or abs(by1 - self.height) > tol
+                bx0 < -tol or by0 < -tol
+                or bx1 > self.width + tol or by1 > self.height + tol
             ):
                 raise BalsaNestError(
-                    "sheet.boundary must be normalized so its bounding box is "
+                    "sheet.boundary must lie within the sheet rectangle "
                     "(0, 0, width, height)."
                 )
 
@@ -78,12 +78,22 @@ class OutputOptions:
     label_max_font_in: float = 0.5
     label_align_bands: bool = True
     label_max_lines: int = 4
-    label_color: str = "#000000"
+    label_color: str = "#0000ff"
     # "raster": black filled text (engraved by rastering).
     # "outline": hairline-stroked text (vector outline engrave -- much faster).
     label_mode: str = "raster"
     label_outline_color: str = "#0000ff"
+    # Font family written into the SVG text elements. Rendered by whatever
+    # opens the file, so it should be a font installed on that machine.
+    label_font: str = "sans-serif"
+    # Measured average character advance of that font (multiple of font size).
+    # None falls back to the built-in per-family table.
+    label_font_ratio: Optional[float] = None
     cut_color: str = "#ff0000"
+    # Kerf compensation: the beam burns away this much material, so cut paths
+    # are offset outward by half of it (part outlines grow, holes shrink) and
+    # finished parts match the drawing. 0 cuts exactly on the drawn lines.
+    kerf_in: float = 0.0
     # "hairline" emits Inkscape hairline strokes (~0.001 in) so print-driver
     # laser workflows register the red lines as cuts. A float sets an explicit
     # stroke width in px instead (some laser software ignores width entirely).
@@ -99,6 +109,9 @@ class OutputOptions:
     # Inch rulers along the top/left edges (reference layer, never cut). Used
     # by the web UI's preview so layouts can be checked against real stock.
     draw_rulers: bool = False
+    # Dashed reference outline of a custom sheet shape. On in the web preview
+    # only -- laser-ready exports must contain nothing but cuts and labels.
+    draw_boundary: bool = False
     debug_borders: bool = False
     debug_color: str = "#1e90ff"        # part bounding boxes + sheet outline
     debug_margin_color: str = "#ff8c00"  # unusable edge-margin band

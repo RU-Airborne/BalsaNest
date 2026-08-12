@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import tempfile
 from pathlib import Path
 from typing import Any, Optional
@@ -235,7 +234,7 @@ def boundary_html(poly: Any, w: float, h: float, note: str) -> str:
     pad = 0.03 * max(w, h)
     stroke = max(w, h) / 120.0
     return (
-        f'<div style="display:flex;gap:14px;align-items:center;margin:4px 0">'
+        f'<div style="display:flex;gap:14px;align-items:center;margin:2px 0">'
         f'<svg width="150" height="95" viewBox="{-pad:.3f} {-pad:.3f} '
         f'{w + 2 * pad:.3f} {h + 2 * pad:.3f}" '
         f'style="background:#1c1c22;border-radius:6px;flex:none">'
@@ -250,7 +249,8 @@ def empty_sheet_viz(boundary: Optional[Any], w: float, h: float) -> str:
     sheet = SheetSpec(width=float(w), height=float(h), boundary=boundary)
     out = Path(tempfile.mkdtemp(prefix="balsanest_web_")) / "sheet_shape.svg"
     write_sheet_svg(
-        out, SheetLayout([]), sheet, 1, 1, OutputOptions(label_parts=False)
+        out, SheetLayout([]), sheet, 1, 1,
+        OutputOptions(label_parts=False, draw_boundary=True),
     )
     kind = "Custom sheet shape" if boundary is not None else "Empty sheet"
     return (

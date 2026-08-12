@@ -59,7 +59,13 @@ from .models import (
     placement_bounds,
 )
 from .nfp import nfp_candidate_seeds, nfp_for_pair
-from .output import SvgSheetWriter, layout_summary, save_outputs, write_sheet_svg
+from .output import (
+    SvgSheetWriter,
+    layout_summary,
+    save_outputs,
+    save_scrap_outlines,
+    write_sheet_svg,
+)
 from .ga import ga_generations, optimize_layout_ga
 from .packing import (
     Nester,
@@ -151,6 +157,7 @@ __all__ = [
     "SvgSheetWriter",
     "write_sheet_svg",
     "save_outputs",
+    "save_scrap_outlines",
     "layout_summary",
     # config / cli
     "DEFAULTS_FILENAME",

@@ -65,9 +65,11 @@ def output_options_from_config(config: dict[str, Any]) -> OutputOptions:
         label_max_lines=int(labels_cfg.get("max_lines", d.label_max_lines)),
         label_color=str(labels_cfg.get("color", d.label_color)),
         label_mode=str(labels_cfg.get("mode", d.label_mode)).lower(),
+        label_font=str(labels_cfg.get("font", d.label_font)),
         label_outline_color=str(labels_cfg.get("outline_color", d.label_outline_color)),
         cut_color=str(config.get("cut_color", d.cut_color)),
         cut_stroke=cut_stroke_raw,
+        kerf_in=float(config.get("kerf_in", d.kerf_in)),
         group_labels_with_parts=bool(
             config.get("group_labels_with_parts", d.group_labels_with_parts)
         ),

@@ -117,6 +117,11 @@ class SvgSheetWriter:
             separators=(",", ":"),
         )
 
+        if options.draw_boundary:
+            # Preview renders only: usable material in wood colour, blocked
+            # space in near-black. Laser exports never get a background.
+            self._write_preview_background(root, sheet, width_px, height_px)
+
         warnings: list[str] = []
         label_pairs: dict[int, LabelSpec] = {}
         if options.label_parts:
@@ -137,7 +142,7 @@ class SvgSheetWriter:
                     if spec is not None:
                         self._emit_label(layer, spec)
 
-        if sheet.boundary is not None:
+        if sheet.boundary is not None and options.draw_boundary:
             self._write_boundary_layer(root, sheet)
 
         if options.draw_rulers:
@@ -229,6 +234,44 @@ class SvgSheetWriter:
             )
             text.text = f"{i}"
 
+    def _write_preview_background(
+        self, root: ET.Element, sheet: SheetSpec, width_px: float, height_px: float
+    ) -> None:
+        """Preview-only background: the sheet's usable material drawn as wood,
+        everything outside a custom shape (and inside its blocked holes) in
+        near-black, so available space reads at a glance."""
+        layer = self._layer(root, "Preview background (not part of the job)", "preview_bg")
+        ET.SubElement(
+            layer,
+            f"{{{SVG_NS}}}rect",
+            {
+                "x": "0", "y": "0",
+                "width": f"{width_px:.2f}", "height": f"{height_px:.2f}",
+                "fill": "#1c1c22",
+            },
+        )
+        if sheet.boundary is not None:
+            ET.SubElement(
+                layer,
+                f"{{{SVG_NS}}}path",
+                {
+                    "d": self._poly_to_path_px(sheet.boundary),
+                    "fill": "#ecdcc0",
+                    "fill-rule": "evenodd",
+                    "stroke": "none",
+                },
+            )
+        else:
+            ET.SubElement(
+                layer,
+                f"{{{SVG_NS}}}rect",
+                {
+                    "x": "0", "y": "0",
+                    "width": f"{width_px:.2f}", "height": f"{height_px:.2f}",
+                    "fill": "#ecdcc0",
+                },
+            )
+
     def _write_boundary_layer(self, root: ET.Element, sheet: SheetSpec) -> None:
         """Reference outline of a non-rectangular stock sheet -- dashed grey so
         no laser convention treats it as a cut. Delete the layer before cutting
@@ -290,6 +333,109 @@ class SvgSheetWriter:
             groups.append(SvgPath(*current))
         return groups
 
+    @staticmethod
+    def _bbox_area(path_obj: Any) -> float:
+        xmin, xmax, ymin, ymax = path_obj.bbox()
+        return (xmax - xmin) * (ymax - ymin)
+
+    def _holes_first(self, transformed: Any) -> Any:
+        """Reorder a path's subpaths smallest first, so interior holes are cut
+        before the outer boundary frees the part to shift."""
+        from svgpathtools import Path as SvgPath
+
+        try:
+            subs = [s for s in transformed.continuous_subpaths() if len(s)]
+        except Exception:
+            return transformed
+        if len(subs) <= 1:
+            return transformed
+        subs.sort(key=self._bbox_area)
+        return SvgPath(*[seg for sub in subs for seg in sub])
+
+    @staticmethod
+    def _travel_order(placements: list[Any]) -> list[Any]:
+        """Nearest neighbour tour over part centres starting at the sheet
+        origin, so lasers that cut in document order waste less time moving
+        the head between parts."""
+        items = []
+        for p in placements:
+            minx, miny, maxx, maxy = p.geometry.bounds
+            items.append(((0.5 * (minx + maxx), 0.5 * (miny + maxy)), p))
+        ordered: list[Any] = []
+        cur = (0.0, 0.0)
+        while items:
+            j = min(
+                range(len(items)),
+                key=lambda k: (items[k][0][0] - cur[0]) ** 2
+                + (items[k][0][1] - cur[1]) ** 2,
+            )
+            center, placement = items.pop(j)
+            ordered.append(placement)
+            cur = center
+        return ordered
+
+    def _kerf_paths(
+        self, group: ET.Element, placement: Placement, seen: Optional[set] = None
+    ) -> None:
+        """Kerf-compensated cut paths: the beam centreline is offset half a
+        kerf outside the part (and inside its holes), so the finished piece
+        matches the drawing. Drawn from the sampled outline, so curves are
+        faceted at the curve sampling step.
+
+        With ``seen`` (common-line merging), coincident offset segments are
+        emitted once. Two neighbouring offset outlines coincide when the part
+        spacing equals the kerf: each grows half a kerf into the gap, so both
+        beam centrelines land on the gap's midline."""
+        from shapely.geometry import Polygon
+        from svgpathtools import Line as SvgLine, Path as SvgPath
+
+        half = 0.5 * float(self.options.kerf_in)
+        geom = placement.geometry.buffer(half, join_style="round")
+        polys = (
+            [geom]
+            if isinstance(geom, Polygon)
+            else [g for g in getattr(geom, "geoms", []) if isinstance(g, Polygon)]
+        )
+        rings = [
+            r
+            for poly in polys
+            if not poly.is_empty
+            for r in [*poly.interiors, poly.exterior]
+        ]
+        # Smallest enclosed area first: holes cut before their outline.
+        rings.sort(key=lambda r: Polygon(r).area)
+        style = self._cut_stroke_style(self.options.cut_color)
+        for ring in rings:
+            if seen is not None:
+                pts = [
+                    complex(x * PX_PER_INCH, y * PX_PER_INCH)
+                    for x, y in ring.coords
+                ]
+                segs = [
+                    SvgLine(a, b)
+                    for a, b in zip(pts, pts[1:])
+                    if abs(a - b) > 1e-9
+                ]
+                pieces = self._dedupe_common_segments(SvgPath(*segs), seen)
+                for piece in pieces:
+                    if len(piece) == 0:
+                        continue
+                    ET.SubElement(
+                        group,
+                        f"{{{SVG_NS}}}path",
+                        {"d": piece.d(), "style": style},
+                    )
+                continue
+            coords = [
+                f"{x * PX_PER_INCH:.3f},{y * PX_PER_INCH:.3f}"
+                for x, y in ring.coords
+            ]
+            ET.SubElement(
+                group,
+                f"{{{SVG_NS}}}path",
+                {"d": "M " + " L ".join(coords) + " Z", "style": style},
+            )
+
     def _part_group(
         self, parent: ET.Element, placement: Placement, seen: Optional[set] = None
     ) -> ET.Element:
@@ -303,8 +449,19 @@ class SvgSheetWriter:
                 "data-mirrored": "1" if placement.variant.mirrored else "0",
             },
         )
-        for path in placement.item.part.paths:
-            transformed = transform_path_for_placement(path, placement)
+        if self.options.kerf_in and self.options.kerf_in > 0:
+            self._kerf_paths(group, placement, seen)
+            return group
+        transformed_paths = [
+            transform_path_for_placement(path, placement)
+            for path in placement.item.part.paths
+            if len(path) > 0
+        ]
+        # Smallest contours first: any hole is cut before the outline that
+        # contains it.
+        transformed_paths.sort(key=self._bbox_area)
+        for transformed in transformed_paths:
+            transformed = self._holes_first(transformed)
             if seen is not None:
                 pieces = self._dedupe_common_segments(transformed, seen)
             else:
@@ -328,7 +485,7 @@ class SvgSheetWriter:
         # No sheet border here: a laser program may treat it as a cut.
         parts_layer = self._layer(root, "Parts (red cut + labels)", "parts")
         seen: Optional[set] = set() if self.options.merge_common_cuts else None
-        for placement in layout.placements:
+        for placement in self._travel_order(layout.placements):
             group = self._part_group(parts_layer, placement, seen)
             spec = label_pairs.get(id(placement))
             if spec is not None:
@@ -337,7 +494,7 @@ class SvgSheetWriter:
     def _write_cut_layer(self, root: ET.Element, layout: SheetLayout) -> None:
         cut_layer = self._layer(root, "Cut (red)", "cut")
         seen: Optional[set] = set() if self.options.merge_common_cuts else None
-        for placement in layout.placements:
+        for placement in self._travel_order(layout.placements):
             self._part_group(cut_layer, placement, seen)
 
     def _emit_label(self, parent: ET.Element, spec: LabelSpec) -> None:
@@ -366,7 +523,7 @@ class SvgSheetWriter:
                 "x": f"{x_px:.4f}",
                 "y": f"{first_baseline_px:.4f}",
                 "font-size": f"{font_px:.4f}",
-                "font-family": "sans-serif",
+                "font-family": self.options.label_font,
                 "text-anchor": "middle",
                 "style": text_style,
             },
@@ -656,6 +813,78 @@ def write_sheet_svg(
 ) -> list[str]:
     """Functional wrapper: write one sheet, return label warnings."""
     return SvgSheetWriter(options).write(output_path, layout, sheet, sheet_number, total_sheets)
+
+
+def save_scrap_outlines(
+    result: LayoutResult, sheet: SheetSpec, base: Path
+) -> list[Path]:
+    """One SVG per sheet tracing the leftover (uncut) material, drawn at the
+    sheet's page size so it can be uploaded straight back as a custom sheet
+    shape for the next job.
+
+    Placed parts are subtracted with their interior holes filled: once cut,
+    the scrap inside a part's cutout falls out of the sheet, so it is not
+    reusable stock. A morphological opening drops slivers thinner than about
+    0.06 in, which no part could use anyway."""
+    from shapely.geometry import Polygon
+    from shapely.geometry import box as shp_box
+    from shapely.ops import unary_union
+
+    def islands(geom: Any) -> list[Any]:
+        if isinstance(geom, Polygon):
+            return [] if geom.is_empty else [geom]
+        return [
+            g
+            for g in getattr(geom, "geoms", [])
+            if isinstance(g, Polygon) and not g.is_empty
+        ]
+
+    base = base.resolve()
+    base.parent.mkdir(parents=True, exist_ok=True)
+    stem = base.with_suffix("") if base.suffix else base
+
+    files: list[Path] = []
+    for i, layout in enumerate(result.sheets, start=1):
+        region = (
+            sheet.boundary
+            if sheet.boundary is not None
+            else shp_box(0.0, 0.0, sheet.width, sheet.height)
+        )
+        used = [
+            Polygon(g.exterior)
+            for placement in layout.placements
+            for g in islands(placement.geometry)
+        ]
+        scrap = region.difference(unary_union(used).buffer(0.01)) if used else region
+        scrap = scrap.buffer(-0.03).buffer(0.03)
+        pieces = [g for g in islands(scrap) if g.area > 0.05]
+        if not pieces:
+            continue
+
+        def ring(coords: Any) -> str:
+            return (
+                "M " + " L ".join(f"{x:.4f},{y:.4f}" for x, y in coords) + " Z"
+            )
+
+        d = " ".join(
+            ring(r.coords)
+            for poly in pieces
+            for r in [poly.exterior, *poly.interiors]
+        )
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" '
+            f'width="{sheet.width:.8g}in" height="{sheet.height:.8g}in" '
+            f'viewBox="0 0 {sheet.width:.8g} {sheet.height:.8g}">'
+            f'<path d="{d}" fill="#c9a06c" fill-rule="evenodd" stroke="none"/>'
+            "</svg>"
+        )
+        if len(result.sheets) == 1:
+            path = stem.with_suffix(".svg")
+        else:
+            path = stem.with_name(f"{stem.name}_sheet_{i:02d}.svg")
+        path.write_text(svg, encoding="utf-8")
+        files.append(path)
+    return files
 
 
 def save_outputs(

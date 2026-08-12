@@ -1,0 +1,52 @@
+name: Build Windows release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build BalsaNest.exe
+        # Explicitly collect Gradio frontend assets and several helper packages
+        run: >
+          pyinstaller --onefile --name BalsaNest
+          --collect-all gradio
+          --collect-all gradio_client
+          --collect-all safehttpx
+          --collect-all groovy
+          webui.py
+
+      - name: Package
+        run: |
+          copy balsanest_defaults.json dist\
+          copy README.md dist\
+          Compress-Archive -Path dist\BalsaNest.exe, dist\balsanest_defaults.json, dist\README.md -DestinationPath BalsaNest-windows.zip
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BalsaNest-windows
+          path: BalsaNest-windows.zip
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: BalsaNest-windows.zip
+          generate_release_notes: true

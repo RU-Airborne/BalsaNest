@@ -19,57 +19,39 @@ treats grain as a hard constraint, a part marked *parallel* or
 plywood parts, where grain direction rarely matters, mark them *free* and
 they pack with full rotation freedom.
 
-## Highlights
+## Feature highlights
 
 
 - **Easy to use** — drag and drop your CAD exports straight into the browser
   and press Start.
+
 - **No Inkscape needed** — SVG, DXF, and PDF are read directly, no conversion
-  step or manual cleanup.
+  step or manual cleanup. DXFs get their units read from the file (with a
+  per-part override if a drawing was saved without them), and CAD segment
+  soup is stitched back into closed shapes so material and holes are
+  detected correctly. Send the nest result  directly to the laser cutter with a print dialog after nesting.
+
 - **Auto watermark removal** — SolidWorks educational watermarks are stripped
   automatically, and multi-view exports are collapsed to a single part.
-- **No stroke fiddling** — cut colours and hairline widths are already set to
-  standard laser conventions in the output files.
-- **Grain-safe by construction** — a part marked *parallel* or
-  *perpendicular* can never end up rotated the wrong way.
-- **Wastes less wood** — small parts are nested inside the cut-out windows of
-  bigger ones, and odd-shaped offcuts can be used by drawing or uploading
-  their outline.
-  
-## Features
 
-
-- **Three input formats: SVG, DXF, and PDF** — 
-  SolidWorks's PDFs exports have the educational
-  watermark stripped automatically. DXFs get their units read from the file
-  (with a per-part override if a drawing was saved without them). Multi-view
-  exports are collapsed to a single copy of the part, and CAD segments
-  are stitched back into closed shapes so material and holes are detected correctly. 
-
-- **Grain control per part** — *parallel*, *perpendicular*, or *free*, plus
-  the angle of your drawing's grain reference if it isn't horizontal.
+- **Grain-safe by construction** — *parallel*, *perpendicular*, or *free* per
+  part, plus the angle of your drawing's grain reference if it isn't
+  horizontal. A constrained part can never end up rotated the wrong way.
   Mirroring is grain preserving, and mirrored variants are only added when
-  they're genuinely different, that is, a symmetric rib isn't being packed, while a cambered airfoil gains a whole extra orientation.
+  they're genuinely different, that is, a symmetric rib isn't being packed
+  twice, while a cambered airfoil gains a whole extra orientation.
 
 - **Tight packing** — parts hug each other's true outlines not  bounding boxes. Every part is then slid toward the corner into the tightest reachable
-  spot, small parts are dropped inside the waste cutouts of bigger parts, and concave pockets get filled too.
-
-- **Two optimizers**,
-  - *Heuristic optimization (fast)* — the **order** parts are placed in
-    decides the layout, so the whole job is packed several times with
-    different orders: biggest first, longest first, narrowest first, then
-    randomized variations, stopping early once improvements dry up. A final
-    polish pass pulls each placed part back out and re-places it with full
-    knowledge of the finished layout, letting parts migrate into pockets that
-    only opened up later.
-  - *Genetic algorithm (slow but tighter)* — It starts from the heuristic's own best orders (so it can only match
-    or beat them), then repeatedly breeds new orders by splicing two good
-    parents together, adds random swap mutations, and keeps the fittest of
-    each generation. Already tried orders are remembered.
+  spot, small parts are dropped inside the waste cutouts of bigger parts, and concave pockets get filled too. The finished cluster is anchored at the
+  sheet's margin corner, so the layout always starts at the top left and the
+  offcut stays one predictable piece.
 
 - **Odd-shaped stock** — nest onto a non-rectangular offcut by uploading its
   outline drawing or painting its shape on a canvas. Interior holes count as blocked areas, the edge margin
-  follows the outline, and parts tuck into its slanted corners.
+  follows the outline, and parts tuck into its slanted corners. The shape stays
+  exactly where it was drawn — the canvas keeps its full size and an uploaded
+  file keeps its page size — so the layout lines up with the real stock on the
+  laser bed.
 
 <p align="center">
   <img src="docs/custom_drawing.png" alt="Odd-shaped stock usable area" width="600">
@@ -83,25 +65,42 @@ they pack with full rotation freedom.
   <em>Parts are placed only within the defined usable area.</em>
 </p>
 
-- **Smart part labels placement to keep raster time short.** Lasers raster
-  horizontally and reposition slowly in the vertical direction.
-  - text is **always horizontal** — vertical engraving is never emitted;
-  - each label may **slide up or down inside its part** to land on a shared
-    row with its neighbours, so several labels engrave in one head pass (two
-    copies of the same part can carry their labels at different heights if
-    that lines each up with a different neighbour);
-  - labels sharing a row are **pulled toward each other** to shorten the
-    sweep, but labels on **opposite ends of the sheet never share a row**.
-  - the label is anchored at the **deepest point inside the part** and its
-    font grows only while the whole text block stays within the material.
-  - long names **wrap on word boundaries** onto up to four lines; single words
-    are never chopped mid-word;
-  - parts genuinely too small for a legible name are left blank.
-  - choose **solid raster letters** (bold) or **traced outline letters**.
-  - 
-- **Hairline and fixed-width cut lines** — choose hairline strokes or set an exact line width in pixels or inches.
+- **Scrap reuse** — after a nest, the leftover material of each sheet is
+  exported as an outline drawing at the sheet's true page size
+  (`nest_scrap*.svg`). Upload it as the custom sheet shape next time and new
+  parts nest straight onto the offcut, positioned to match the board.
 
-- **Common-line merging** — when spacing is set to zero, shared edges between touching parts are merged so the laser cuts the edge once instead of twice.
+- **Dimensionally exact parts** — kerf compensation: set the width your beam
+  burns away and every cut line is offset outward by half of it (part
+  outlines grow, holes shrink), so finished parts match the drawing exactly.
+  Holes or slots narrower than the kerf can't survive the offset — they're
+  detected and reported instead of silently vanishing.
+
+- **Cut order that saves laser time** — within each part, holes are always cut
+  before the outline that would free the part to shift; across the sheet,
+  parts are cut in a nearest-neighbour order starting at the origin so the
+  head travels less between parts.
+
+- **Save and load jobs** — one file bundles the part drawings themselves plus
+  quantities, grain settings, the sheet, any custom shape, and every nesting
+  and laser setting. Load it later and pick the project up without uploading
+  anything again.
+
+- **Smart part labels with custom fonts** — each part's name is engraved at the largest font
+  that fits inside its material, wrapping long names onto multiple lines and
+  skipping parts too small for a legible label. Labels stay horizontal and
+  slide onto shared raster rows with their neighbours, so the laser makes
+  fewer slow vertical moves. Choose raster or outline engraving, in any font
+  installed on the machine.
+
+- **Cuts-only twin files** — alongside the labelled output, a second SVG per
+  sheet holding just the cut lines, for re-cutting a part without sitting
+  through the engraving pass again.
+  
+- **Ready-to-cut output** — laser-convention colours at exact 1:1 scale, with
+  hairline strokes or a fixed cut-line width in pixels or inches.
+
+- **Common-line merging** — when spacing is set to zero, shared edges between touching parts are merged so the laser cuts the edge once instead of twice. With kerf compensation on, set the spacing equal to the kerf instead: both offset lines then land on the gap's midline and merge, and both parts still come out exact.
 
 - **Inkscape-ready grouping** — every part and its label are placed in a single Inkscape group, so manual layout adjustments move the geometry and label together.
 
@@ -144,6 +143,7 @@ showing a preview and its measured size — **check the size looks right** befor
 anything else. On each card:
 
 - **Quantity** — how many copies to cut.
+- **Remove part** — takes the part out of the job without touching the others.
 - **Grain alignment** — *parallel* (part grain follows the sheet grain, the
   strong choice for ribs and spars), *perpendicular* (across the grain), or
   *free* (any 90° rotation allowed — fine for gussets and doublers). 
@@ -156,7 +156,11 @@ anything else. On each card:
 - **Custom sheet shape** — for offcuts and odd shapes: press *Draw the sheet
   shape...* and paint the usable material on a canvas, or upload an
   outline drawing. Parts are then only placed inside that shape, and interior
-  holes are treated as unusable.
+  holes are treated as unusable. The sheet keeps its full size — the painted
+  or drawn shape just marks where parts may go, at the exact position you put
+  it, so alignment on the laser bed matches. An uploaded file's page size
+  becomes the sheet size (a `nest_scrap*.svg` from an earlier run drops
+  straight in).
 - **Grain direction of the sheet** — which way the grain runs on your stock
   (x = along the width, y = along the height).
 - **Maximum number of sheets** — 0 lets BalsaNest add sheets as needed.
@@ -166,12 +170,17 @@ anything else. On each card:
 ### Nesting algorithm settings
 
 - **Optimizer**:
-  - *Heuristic optimization (fast)* — tries several sensible packing orders
-    (biggest-first, longest-first, and randomized variations) and keeps the
-    best. 
-  - *Genetic algorithm (slow but tighter)* — It can only match or beat the heuristic, but each
-    generation takes real time on big jobs. Press **Stop evolving** whenever
-    you're happy, or let it stop at *Maximum generations*.
+  - *Heuristic optimization (fast)* — the **order** parts are placed in
+decides the layout, so the whole job is packed several times with
+different orders: biggest first, longest first, narrowest first, then
+randomized variations, stopping early once improvements dry up. A final
+polish pass pulls each placed part back out and re-places it with full
+knowledge of the finished layout, letting parts migrate into pockets that
+only opened up later.
+  - *Genetic algorithm (slow but tighter)* — It starts from the heuristic's own best orders (so it can only match
+  or beat them), then repeatedly breeds new orders by splicing two good
+  parents together, adds random swap mutations, and keeps the fittest of
+  each generation. Already tried orders are remembered.
 - **Optimization passes / Maximum generations** — how long the chosen
   optimizer works.
 - **Allow parts to be flipped (mirrored)** — mirror images pack tighter; turn
@@ -185,13 +194,29 @@ anything else. On each card:
 ### Output & laser settings
 
 - **Engrave each part's name** — on/off, plus *raster* (solid letters) vs
-  *outline* (traced letters, much faster) styles.
+  *outline* (traced letters, much faster) styles, and the label font (any
+  font installed on this computer, with a live preview).
+- **Also download a cuts-only version** — a second SVG per sheet with the cut
+  lines only, for re-cuts that skip the engraving pass.
+- **Export the leftover material** — one outline SVG per sheet tracing the
+  unused material, ready to re-upload as a custom sheet shape.
 - **Colours** — cut, raster-label, and outline-label colours to match laser software's conventions.
 - **Cut line style** — Hairline or a fixed width in pixels or inches.
+- **Kerf compensation** — the width your laser burns away; cut lines move
+  outward by half of it so parts come out the exact drawn size. 0 cuts
+  exactly on the drawn lines.
 - **Merge common cut lines** — with part spacing set to 0, an edge shared by
-  two touching parts is cut once instead of twice.
+  two touching parts is cut once instead of twice (with kerf on, set the
+  spacing equal to the kerf instead).
 - **Debug overlay in the downloaded file** — adds the inspection layer to the
   SVG itself.
+
+### Save and load job
+
+**Save job** bundles everything on the page, which includes the part drawings themselves,
+their quantities and grain settings, the sheet, any custom shape, and every
+setting — into one JSON file. **Load job** restores it exactly as it was, so
+a project survives browser refreshes and moves between machines.
 
 ### Running it
 
@@ -205,13 +230,15 @@ finishes, the Output section holds your files.
 
 ## Using the output
 
-You get one SVG per sheet plus a JSON summary:
+You get one SVG per sheet plus a JSON summary, and depending on the toggles a
+cuts-only twin (`nest_cuts_only*.svg`) and a leftover-material outline
+(`nest_scrap*.svg`) per sheet:
 
 - **Open the SVG in Inkscape first.** Each part is a **group** containing its
   cut paths and its name label. Click a part and you can move or delete the
   whole thing, label included, if you want to hand-tweak the layout.
-- **Colours are the laser conventions**: red hairlines = cut, black filled
-  text = raster engrave, blue hairlines = outline engrave.
+- **Colours are the laser conventions**: red hairlines = cut, blue filled
+  text = raster engrave, blue hairlines = outline engrave (all editable).
 - The files are **exact 1:1 scale** (the document is set up in inches).
   Measure one part with Inkscape's tool the first time and confirm your laser
   software imports at 100%.
@@ -222,7 +249,7 @@ You get one SVG per sheet plus a JSON summary:
 ## How it works
 
 
-Every internal technical detail is documented in `balsanest_core/README.md`.
+Every internal technical detail is documented in `core/README.md`.
 
 ## Notes
 
@@ -235,7 +262,14 @@ Every internal technical detail is documented in `balsanest_core/README.md`.
 - PDF import uses **page 1 only**, export one part per PDF.
 - Parts too small to hold a readable label are left unlabelled and reported.
 - Common-line merging only merges **exactly** coinciding edges, so it needs
-  part spacing 0, partial overlaps are left alone.
+  part spacing 0 (or spacing equal to the kerf when compensation is on),
+  partial overlaps are left alone.
+- With kerf compensation on, cut paths come from the **sampled outline**, so
+  very tight curves are faceted at the curve sampling step — invisible at the
+  default settings, and a smaller sampling step smooths it further.
+- A label font other than the generic *sans-serif* must also be **installed on
+  the computer that opens the file**, or its software substitutes another
+  font.
 - A part drawn multiple times in one file (multi-view export) is detected and
   reduced to a single copy.
 - Settings you use every time (sheet size, colours, stroke style) can be saved

@@ -19,7 +19,7 @@ def set_outline_from_file(path: Optional[str], sheet_w: float, sheet_h: float):
     """Load an uploaded outline drawing as the custom sheet shape."""
     if not path:
         return (
-            None, "", gr.update(), gr.update(),
+            None, gr.update(value="", visible=False), gr.update(), gr.update(),
             empty_sheet_viz(None, sheet_w, sheet_h),
         )
     try:
@@ -27,16 +27,13 @@ def set_outline_from_file(path: Optional[str], sheet_w: float, sheet_h: float):
     except BalsaNestError as exc:
         raise gr.Error(str(exc)) from exc
     holes = len(boundary.interiors)
-    note = (
-        f"<b>Custom sheet shape active</b> &mdash; {w:.2f} &times; {h:.2f} in"
-        + (f", {holes} blocked hole(s)" if holes else "")
-        + ".<br>Parts will only be placed inside this outline. Remove the file "
-        "to go back to a plain rectangle."
+    note = "<b>Custom sheet shape active</b>" + (
+        f" ({holes} blocked hole(s))" if holes else ""
     )
     state = {"kind": "file", "path": str(path), "w": w, "h": h}
     return (
         state,
-        boundary_html(boundary, w, h, note),
+        gr.update(value=boundary_html(boundary, w, h, note), visible=True),
         gr.update(value=round(w, 3)),
         gr.update(value=round(h, 3)),
         empty_sheet_viz(boundary, w, h),
@@ -96,25 +93,26 @@ def set_outline_from_drawing(editor_value: Any, sheet_w: float, sheet_h: float):
     if isinstance(poly, MultiPolygon):
         poly = max(poly.geoms, key=lambda g: g.area)
     poly = poly.simplify(1.5 * f * max(sx, sy)).buffer(0)
+    # Simplify/buffer can nudge the shape a hair past the canvas edge; the
+    # sheet keeps its size, so clip rather than rescale.
+    poly = poly.intersection(shp_box(0.0, 0.0, float(sheet_w), float(sheet_h)))
+    if isinstance(poly, MultiPolygon):
+        poly = max(poly.geoms, key=lambda g: g.area)
     minx, miny, maxx, maxy = poly.bounds
-    from shapely.affinity import translate as shp_translate
-
-    poly = shp_translate(poly, xoff=-minx, yoff=-miny)
-    w, h = maxx - minx, maxy - miny
-    if w < 0.5 or h < 0.5:
+    shape_w, shape_h = maxx - minx, maxy - miny
+    if shape_w < 0.5 or shape_h < 0.5:
         raise gr.Error("The traced shape is under half an inch -- draw it larger.")
 
-    note = (
-        f"<b>Drawn sheet shape active</b> &mdash; traced to {w:.2f} &times; {h:.2f} in "
-        f"(the canvas maps onto the sheet width x height)."
-        "<br>Press Clear below to go back to a plain rectangle."
-    )
+    w, h = float(sheet_w), float(sheet_h)
+    note = "<b>Drawn sheet shape active</b>"
     state = {"kind": "wkt", "wkt": poly.wkt, "w": w, "h": h}
+    # The drawing window is closed by a chained step in the UI, NOT from here:
+    # closing it re-renders the modal away while this event is still running,
+    # which strands the event's progress indicator blinking forever.
     return (
         state,
-        boundary_html(poly, w, h, note),
-        gr.update(value=round(w, 3)),
-        gr.update(value=round(h, 3)),
-        False,  # close the drawing window
+        gr.update(value=boundary_html(poly, w, h, note), visible=True),
+        gr.update(),
+        gr.update(),
         empty_sheet_viz(poly, w, h),
     )

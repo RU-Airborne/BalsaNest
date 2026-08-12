@@ -1040,14 +1040,22 @@ def test_load_sheet_boundary_and_config(tmp_path):
 
 def test_polygon_sheet_outline_layer_in_output(tmp_path):
     import xml.etree.ElementTree as ET
-    sheet = _triangle_sheet(8.0)
-    layout = bn.SheetLayout([_square_placement("sq", 0.5)])
-    out = tmp_path / "tri.svg"
-    bn.write_sheet_svg(out, layout, sheet, 1, 1, bn.OutputOptions(label_parts=False))
-    root = ET.parse(out).getroot()
-    labels = [g.get("{http://www.inkscape.org/namespaces/inkscape}label")
-              for g in root.iter() if g.tag.endswith("}g")]
-    assert any(l and "Sheet outline" in l for l in labels)
+
+    def outline_layers(options):
+        out = tmp_path / "tri.svg"
+        bn.write_sheet_svg(
+            out, bn.SheetLayout([_square_placement("sq", 0.5)]),
+            _triangle_sheet(8.0), 1, 1, options,
+        )
+        root = ET.parse(out).getroot()
+        labels = [g.get("{http://www.inkscape.org/namespaces/inkscape}label")
+                  for g in root.iter() if g.tag.endswith("}g")]
+        return [l for l in labels if l and "Sheet outline" in l]
+
+    # Laser-ready export: no reference outline of the custom sheet shape.
+    assert not outline_layers(bn.OutputOptions(label_parts=False))
+    # Preview render: the dashed outline layer is present.
+    assert outline_layers(bn.OutputOptions(label_parts=False, draw_boundary=True))
 
 
 # --- Label raster-band optimization -------------------------------------------

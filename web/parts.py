@@ -8,6 +8,18 @@ from core import BalsaNestError, PartRequest, load_part
 from .previews import PREVIEW_SAMPLE_STEP, part_preview_datauri
 
 
+def _file_key(path: str) -> tuple[str, int]:
+    """Identity of a file independent of where it is cached: Gradio copies
+    uploaded/programmatically-set files into fresh temp paths, so the same
+    part can reappear under a new path (e.g. after Load job) and must not be
+    treated as a second part."""
+    p = Path(path)
+    try:
+        return (p.name, p.stat().st_size)
+    except OSError:
+        return (p.name, -1)
+
+
 def sync_parts(file_list: Optional[list[str]], parts: list[dict]):
     """Sync the parts list with the upload component, keeping per-part settings
     (quantity, grain, ...) for files that were already loaded.
@@ -23,6 +35,11 @@ def sync_parts(file_list: Optional[list[str]], parts: list[dict]):
 
     file_list = [str(f) for f in (file_list or [])]
     existing = [p["path"] for p in parts]
+    # Translate re-cached copies of known files back to their original paths.
+    by_key = {}
+    for p in parts:
+        by_key.setdefault(_file_key(p["path"]), p["path"])
+    file_list = [by_key.get(_file_key(f), f) for f in file_list]
     if file_list and not set(file_list) <= set(existing):
         merged = existing + [f for f in file_list if f not in existing]
     else:

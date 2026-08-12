@@ -8,10 +8,14 @@ from core import load_defaults, output_options_from_config
 
 from .assets import (
     GRAIN_RULE_HTML,
+    KERF_RULE_HTML,
     LABEL_STYLE_HTML,
     OR_DIVIDER_HTML,
     SHEET_GRAIN_HTML,
+    font_preview_html,
 )
+from .fonts import font_choices
+from .jobs import load_job, save_job
 from .nesting import run_nest
 from .parts import reload_with_units, sync_parts
 from .previews import empty_sheet_viz, grid_canvas_file
@@ -58,23 +62,51 @@ def build_ui() -> gr.Blocks:
         )
         viz_debug = gr.Checkbox(
             value=True,
-            label="Show the debug overlay in the preview above",
+            label="Show the debug overlay in the visualizer above",
             info="Draws each part's bounding box, the edge margin, scrap cutouts "
             "and pockets that can hold smaller parts.",
         )
-        messages_md = gr.Markdown()
         gr.Markdown("## Output", elem_classes=["section-title"])
-        with gr.Row():
-            files_out = gr.Files(
-                label="Download your laser-ready files (SVG sheets + JSON summary)",
-                scale=1,
-            )
+        with gr.Row(equal_height=False):
+            with gr.Column(scale=1):
+                files_out = gr.Files(
+                    label="Download laser cut ready files",
+                )
+                print_html = gr.HTML(padding=False, visible=False)
             with gr.Column(scale=1):
                 with gr.Accordion("Layout summary json", open=False):
+                    summary_dl = gr.DownloadButton(
+                        "Download summary json", size="sm", visible=False,
+                    )
                     summary_json = gr.JSON()
+        messages_md = gr.HTML(padding=False)
 
         # ---------------- middle: settings, three columns ----------------
         gr.Markdown("## Settings", elem_classes=["section-title"])
+        with gr.Accordion("Save and load job", open=True):
+            with gr.Row(elem_id="job-row"):
+                save_job_btn = gr.Button(
+                    "Save job...", size="sm", scale=0, min_width=130,
+                    variant="primary",
+                )
+                load_job_btn = gr.UploadButton(
+                    "Load job...", size="sm", scale=0, min_width=130,
+                    file_types=[".json"], file_count="single", type="filepath",
+                    variant="primary",
+                )
+                saved_job_file = gr.File(
+                    label="Saved job (download and keep this file)",
+                    visible=False, interactive=False, scale=0, min_width=340,
+                )
+            gr.Markdown(
+                "Save job bundles everything on this page into one file: the "
+                "part drawings themselves, their quantities and grain "
+                "settings, the sheet size, any custom sheet shape, and every "
+                "nesting and laser setting. Load job restores a saved file "
+                "exactly as it was, so you can close the browser and pick the "
+                "project up later without uploading anything again.",
+                elem_classes=["info-text", "centered"],
+            )
         with gr.Row(equal_height=False):
             with gr.Column():
                 with gr.Accordion("Sheet of material", open=True):
@@ -92,19 +124,22 @@ def build_ui() -> gr.Blocks:
                             "For non-rectangular stock: draw the shape by hand, "
                             "or upload an outline drawing. Parts are then only "
                             "placed inside that outline.",
+                            elem_classes=["info-text"],
                         )
                         draw_open_btn = gr.Button(
                             "Draw the sheet shape...", size="sm", variant="primary"
                         )
                         gr.HTML(OR_DIVIDER_HTML, padding=False)
-                        with gr.Group():
-                            outline_file = gr.File(
-                                label="Upload an outline drawing (.svg / .dxf / .pdf)",
-                                file_count="single",
-                                file_types=[".svg", ".dxf", ".pdf"],
-                                type="filepath",
-                            )
-                            outline_html = gr.HTML("", padding=False)
+                        outline_file = gr.File(
+                            label="Upload an outline drawing (.svg / .dxf / .pdf)",
+                            file_count="single",
+                            file_types=[".svg", ".dxf", ".pdf"],
+                            type="filepath",
+                        )
+                        outline_html = gr.HTML(
+                            "", padding=False, visible=False,
+                            elem_classes=["outline-note"],
+                        )
                         clear_outline_btn = gr.Button(
                             "Clear custom shape", size="sm"
                         )
@@ -138,18 +173,17 @@ def build_ui() -> gr.Blocks:
                         ["Heuristic optimization (fast)", "Genetic algorithm (slow but tighter)"],
                         value="Heuristic optimization (fast)",
                         label="Optimizer",
-                        info="The heuristic tries several sensible packing orders "
-                        "and keeps the best -- done in seconds. The genetic "
-                        "algorithm keeps breeding better layouts and shows each "
-                        "generation live in the preview until you press 'Stop "
-                        "evolving' next to the Nest button.",
+                        info="The heuristic tries several packing orders, keeps "
+                        "the best layout and finishes in seconds. The genetic "
+                        "algorithm breeds and mutates whole layouts over many "
+                        "generations to pack tighter, showing each generation "
+                        "live until you press Stop evolving.",
                     )
                     passes = gr.Slider(
-                        1, 24, value=int(d_sheet.get("passes", 8)), step=1,
+                        1, 24, value=int(d_sheet.get("passes", 5)), step=1,
                         label="Optimization passes",
                         info="How many different layouts the heuristic optimizer "
-                        "tries before keeping the best one. The genetic algorithm "
-                        "ignores this and runs until stopped.",
+                        "tries before keeping the best one.",
                     )
                     allow_mirror = gr.Checkbox(
                         value=bool(d_sheet.get("allow_mirror", True)),
@@ -193,16 +227,28 @@ def build_ui() -> gr.Blocks:
 
             with gr.Column():
                 with gr.Accordion("Output & laser settings", open=True):
-                    label_parts_cb = gr.Checkbox(
-                        value=d_opts.label_parts,
-                        label="Engrave each part's name on it",
-                        info="Engraves the part's file name onto the part itself. "
-                        "To keep engraving fast, labels are always horizontal and "
-                        "slide onto shared rows with nearby labels, so the laser "
-                        "makes fewer slow vertical moves; labels on opposite ends "
-                        "of the sheet are kept on separate rows so the head never "
-                        "sweeps the whole board, and long names wrap onto "
-                        "multiple lines.",
+                    with gr.Group():
+                        label_parts_cb = gr.Checkbox(
+                            value=d_opts.label_parts,
+                            label="Engrave each part's name on it",
+                            info="Engraves each part's file name onto the part so "
+                            "the cut pieces are easy to identify.",
+                        )
+                        export_unlabeled_cb = gr.Checkbox(
+                            value=True,
+                            visible=d_opts.label_parts,
+                            label="Also download a cuts-only version (no engraving)",
+                            info="Alongside the normal file, adds a second SVG per "
+                            "sheet containing just the cut lines. Use it when a "
+                            "part needs to be cut again, so the laser skips the "
+                            "slow engraving pass.",
+                        )
+                    export_scrap_cb = gr.Checkbox(
+                        value=True,
+                        label="Export the leftover material of each sheet",
+                        info="Adds one SVG per sheet tracing the unused "
+                        "material. Upload it later as the custom sheet shape "
+                        "to nest new parts onto the offcut.",
                     )
                     debug_overlay = gr.Checkbox(
                         value=False,
@@ -218,20 +264,29 @@ def build_ui() -> gr.Blocks:
                             info="How the part names are engraved.",
                         )
                         gr.HTML(LABEL_STYLE_HTML, padding=False)
-                    with gr.Row():
+                        label_font_dd = gr.Dropdown(
+                            font_choices(), value=d_opts.label_font,
+                            allow_custom_value=True,
+                            label="Label font",
+                            info="Every font installed on this computer. Type "
+                            "to search.",
+                        )
+                        font_preview = gr.HTML(
+                            font_preview_html(d_opts.label_font), padding=False
+                        )
+                    with gr.Row(equal_height=True):
                         cut_color = gr.ColorPicker(
                             value=d_opts.cut_color, label="Cut colour",
-                            info="Colour of the cut lines.",
+                            min_width=60,
                         )
                         label_color = gr.ColorPicker(
                             value=d_opts.label_color, label="Raster colour",
-                            info="Colour of the raster-engraved name labels.",
+                            min_width=60,
                         )
                         outline_color = gr.ColorPicker(
                             value=d_opts.label_outline_color,
                             label="Outline colour",
-                            info="Label colour when the engraving style is "
-                            "outline.",
+                            min_width=60,
                         )
                     merge_cuts = gr.Checkbox(
                         value=d_opts.merge_common_cuts,
@@ -268,60 +323,86 @@ def build_ui() -> gr.Blocks:
                         cut_stroke_mode, [stroke_px, stroke_in],
                         show_progress="hidden",
                     )
+                    with gr.Group():
+                        kerf = gr.Slider(
+                            0.0, 0.03, value=0.0, step=0.001,
+                            label="Kerf compensation (in)",
+                            info="The width of material your laser burns away. "
+                            "Cut lines move outward by half this value so parts "
+                            "come out the exact drawn size. Leave at 0 to cut "
+                            "exactly on the drawn lines.",
+                        )
+                        gr.HTML(KERF_RULE_HTML, padding=False)
 
         # Floating drawing window: its contents are rendered on demand, so the
         # canvas always mounts while visible (a canvas created inside a hidden
         # container stays blank).
         draw_open = gr.State(False)
 
-        @gr.render(inputs=[draw_open, sheet_w, sheet_h], triggers=[draw_open.change])
-        def render_draw_modal(open_, w, h):
-            if not open_:
-                return
-            w = max(float(w or 1.0), 0.5)
-            h = max(float(h or 1.0), 0.5)
-            cw = 880
-            ch = int(round(cw * h / w))
-            if ch > 540:
-                ch = 540
-                cw = int(round(ch * w / h))
-            with gr.Group(elem_id="draw-modal"):
-                with gr.Row(elem_id="draw-modal-head"):
-                    gr.Markdown(
-                        f"### Draw the sheet shape\nSelect the **draw tool** and "
-                        f"paint the usable material -- whatever you paint becomes "
-                        f"the sheet (any colour that stands out from the white "
-                        f"paper). The canvas is **{w:g} x {h:g} in** with a "
-                        f"1-inch grid; the numbers along the top and left edges "
-                        f"count inches from the top-left corner."
-                    )
-                    close_btn = gr.Button("Close", size="sm", scale=0, min_width=90)
-                editor = gr.Sketchpad(
-                    label=f"Sheet canvas ({w:g} x {h:g} in -- painted = usable material)",
-                    type="numpy",
-                    canvas_size=(cw, ch),
-                    value=grid_canvas_file(w, h, cw, ch),
-                    brush=gr.Brush(default_size=40, default_color="#c9a06c",
-                                   colors=["#c9a06c"]),
-                    interactive=True,
-                )
-                use_btn = gr.Button(
-                    "Use drawing as sheet shape", variant="primary", size="sm"
-                )
+        # The slot exists so CSS can suppress the render container's
+        # "generating" border: Gradio leaves it pulsing (red accent) after the
+        # modal closes, which looked like a stuck red bar above Parts.
+        with gr.Column(elem_id="draw-modal-slot"):
 
-            close_btn.click(lambda: False, None, draw_open, show_progress="hidden")
-            # The trash button wipes the grid background; restore it so the
-            # user can immediately redraw.
-            editor.clear(
-                lambda: grid_canvas_file(w, h, cw, ch),
-                None, editor, show_progress="hidden",
+            @gr.render(
+                inputs=[draw_open, sheet_w, sheet_h], triggers=[draw_open.change]
             )
-            use_btn.click(
-                set_outline_from_drawing,
-                [editor, sheet_w, sheet_h],
-                [outline_state, outline_html, sheet_w, sheet_h, draw_open, result_html],
-                show_progress="minimal",
-            )
+            def render_draw_modal(open_, w, h):
+                if not open_:
+                    return
+                w = max(float(w or 1.0), 0.5)
+                h = max(float(h or 1.0), 0.5)
+                cw = 880
+                ch = int(round(cw * h / w))
+                if ch > 540:
+                    ch = 540
+                    cw = int(round(ch * w / h))
+                with gr.Group(elem_id="draw-modal"):
+                    with gr.Row(elem_id="draw-modal-head"):
+                        gr.Markdown(
+                            f"### Draw the sheet shape\nSelect the **draw tool** and "
+                            f"paint the usable material (any colour that stands out "
+                            f"from the white paper). The sheet stays **{w:g} x "
+                            f"{h:g} in**; the painted area marks where parts may be "
+                            f"placed, exactly where you paint it -- so the layout "
+                            f"lines up with the real stock on the laser bed. The "
+                            f"canvas has a 1-inch grid; the numbers along the top "
+                            f"and left edges count inches from the top-left corner."
+                        )
+                        close_btn = gr.Button("Close", size="sm", scale=0, min_width=90)
+                    editor = gr.Sketchpad(
+                        label=f"Sheet canvas ({w:g} x {h:g} in -- painted = usable material)",
+                        type="numpy",
+                        canvas_size=(cw, ch),
+                        value=grid_canvas_file(w, h, cw, ch),
+                        brush=gr.Brush(default_size=40, default_color="#c9a06c",
+                                       colors=["#c9a06c"]),
+                        interactive=True,
+                    )
+                    use_btn = gr.Button(
+                        "Use drawing as sheet shape", variant="primary", size="sm"
+                    )
+
+                close_btn.click(lambda: False, None, draw_open, show_progress="hidden")
+                # The trash button wipes the grid background; restore it so the
+                # user can immediately redraw.
+                editor.clear(
+                    lambda: grid_canvas_file(w, h, cw, ch),
+                    None, editor, show_progress="hidden",
+                )
+                use_evt = use_btn.click(
+                    set_outline_from_drawing,
+                    [editor, sheet_w, sheet_h],
+                    [outline_state, outline_html, sheet_w, sheet_h, result_html],
+                    show_progress="minimal",
+                )
+                # Close the window only after the trace event has fully finished
+                # (closing re-renders this modal away; doing that mid-event leaves
+                # the event's progress bar blinking forever). .success keeps it
+                # open when tracing failed with an error toast.
+                use_evt.success(
+                    lambda: False, None, draw_open, show_progress="hidden",
+                )
 
         # ---------------- bottom: upload + part cards ----------------
         gr.Markdown("## Parts", elem_classes=["section-title"])
@@ -362,6 +443,14 @@ def build_ui() -> gr.Blocks:
                     return reloaded, reloaded
                 return fn
 
+            def _remove(i):
+                def fn(parts):
+                    # Push the shortened list into the upload component; its
+                    # change event rebuilds both part states from there.
+                    keep = [p["path"] for j, p in enumerate(parts) if j != i]
+                    return gr.update(value=keep)
+                return fn
+
             for start in range(0, len(parts), 2):
                 with gr.Row(equal_height=True):
                     for idx in range(start, min(start + 2, len(parts))):
@@ -382,6 +471,15 @@ def build_ui() -> gr.Blocks:
                                             gr.Markdown(
                                                 f"**{p['name']}**\n\n"
                                                 f"<span style='color:#f66'>ERROR: {p['error']}</span>"
+                                            )
+                                            err_remove = gr.Button(
+                                                "Remove part", size="sm", scale=0,
+                                                variant="stop",
+                                                elem_classes=["remove-part-btn"],
+                                            )
+                                            err_remove.click(
+                                                _remove(idx), parts_state, files,
+                                                show_progress="hidden",
                                             )
                                             continue
                                         gr.Markdown(
@@ -422,8 +520,16 @@ def build_ui() -> gr.Blocks:
                                                     "file was drawn in.",
                                                     interactive=True,
                                                 )
+                                        remove_btn = gr.Button(
+                                            "Remove part", size="sm", scale=0,
+                                            elem_classes=["remove-part-btn"],
+                                        )
 
                                 if not p["error"]:
+                                    remove_btn.click(
+                                        _remove(idx), parts_state, files,
+                                        show_progress="hidden",
+                                    )
                                     qty.change(
                                         _set("qty", idx), [qty, parts_state], parts_state,
                                         show_progress="hidden",
@@ -454,6 +560,48 @@ def build_ui() -> gr.Blocks:
             show_progress="minimal",
         )
 
+        label_parts_cb.change(
+            lambda v: gr.update(visible=bool(v)),
+            label_parts_cb, export_unlabeled_cb,
+            show_progress="hidden",
+        )
+        label_font_dd.change(
+            font_preview_html, label_font_dd, font_preview,
+            show_progress="hidden",
+        )
+
+        save_job_btn.click(
+            save_job,
+            inputs=[
+                parts_state, outline_state,
+                sheet_w, sheet_h, grain_axis, margin, spacing, max_sheets,
+                optimizer, passes, allow_mirror, allow_holes, allow_partial,
+                grid_step, sample_step, seed,
+                label_parts_cb, export_unlabeled_cb, export_scrap_cb,
+                label_mode, label_font_dd, label_color, outline_color, cut_color,
+                cut_stroke_mode, stroke_px, stroke_in, kerf,
+                merge_cuts, debug_overlay,
+            ],
+            outputs=saved_job_file,
+            show_progress="minimal",
+        )
+        load_job_btn.upload(
+            load_job,
+            inputs=load_job_btn,
+            outputs=[
+                parts_state, parts_layout_state, files,
+                sheet_w, sheet_h, grain_axis, margin, spacing, max_sheets,
+                outline_state, outline_html, outline_file, result_html,
+                optimizer, passes, allow_mirror, allow_holes, allow_partial,
+                grid_step, sample_step, seed,
+                label_parts_cb, export_unlabeled_cb, export_scrap_cb,
+                label_mode, label_font_dd, label_color, outline_color, cut_color,
+                cut_stroke_mode, stroke_px, stroke_in, kerf,
+                merge_cuts, debug_overlay,
+            ],
+            show_progress="minimal",
+        )
+
         outline_file.change(
             set_outline_from_file,
             [outline_file, sheet_w, sheet_h],
@@ -464,7 +612,10 @@ def build_ui() -> gr.Blocks:
             lambda: True, None, draw_open, show_progress="hidden"
         )
         clear_outline_btn.click(
-            lambda w, h: (None, "", gr.update(value=None), empty_sheet_viz(None, w, h)),
+            lambda w, h: (
+                None, gr.update(value="", visible=False),
+                gr.update(value=None), empty_sheet_viz(None, w, h),
+            ),
             [sheet_w, sheet_h],
             [outline_state, outline_html, outline_file, result_html],
             show_progress="hidden",
@@ -497,11 +648,15 @@ def build_ui() -> gr.Blocks:
                 sheet_w, sheet_h, grain_axis, margin, spacing, max_sheets,
                 outline_state, optimizer, passes, allow_mirror, allow_holes, allow_partial,
                 grid_step, sample_step, seed,
-                label_parts_cb, label_mode, label_color, outline_color,
-                cut_color, cut_stroke_mode, stroke_px, stroke_in, merge_cuts,
-                debug_overlay, viz_debug, stop_state,
+                label_parts_cb, export_unlabeled_cb, export_scrap_cb,
+                label_mode, label_font_dd, label_color, outline_color,
+                cut_color, cut_stroke_mode, stroke_px, stroke_in, kerf,
+                merge_cuts, debug_overlay, viz_debug, stop_state,
             ],
-            outputs=[result_html, messages_md, files_out, summary_json, viz_state],
+            outputs=[
+                result_html, messages_md, files_out, summary_json, viz_state,
+                print_html, summary_dl,
+            ],
             show_progress="hidden",
         )
         nest_evt.then(
@@ -513,7 +668,7 @@ def build_ui() -> gr.Blocks:
             ga = o.lower().startswith("genetic")
             if ga:
                 return gr.update(
-                    label="Maximum generations", maximum=40, value=20,
+                    label="Maximum generations", maximum=40, value=5,
                     info="The genetic algorithm evolves until you press "
                     "'Stop evolving', or stops on its own after this many "
                     "generations.",

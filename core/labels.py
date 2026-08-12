@@ -19,11 +19,25 @@ from typing import Any, Optional
 
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry import box as shp_box
+from shapely.prepared import prep
 
 from .constants import LABEL_CHAR_WIDTH_RATIO
 from .models import OutputOptions, SheetLayout
 
 LABEL_LINE_SPACING = 1.2  # line height as a multiple of font size
+
+# Conservative average character advance per font, as a multiple of the font
+# size, used to size the text block before any renderer sees the file. Keys
+# are lowercase font family names; unknown fonts fall back to the constant.
+LABEL_FONT_WIDTH_RATIOS = {
+    "sans-serif": LABEL_CHAR_WIDTH_RATIO,
+    "arial": 0.60,
+    "verdana": 0.70,
+    "tahoma": 0.64,
+    "courier new": 0.62,
+    "times new roman": 0.58,
+    "georgia": 0.62,
+}
 
 
 @dataclass
@@ -149,20 +163,31 @@ class LabelPlanner:
         if not label:
             return None
 
-        cx, cy, _clear = _pole_of_inaccessibility(poly)
+        prepared = prep(poly)
         max_lines = max(1, opts.label_max_lines)
+        single = len([w for w in re.split(r"[\s_\-]+", label) if w]) <= 1
 
-        words = [w for w in re.split(r"[\s_\-]+", label) if w]
-        if len(words) <= 1:
-            # Single word: keep it on one line if it fits at all -- hard-splitting
-            # a word ("bul/khe/ad") reads badly. Only stack it when one line is
-            # impossible, and then use the fewest lines that fit.
-            chosen = self._single_word(poly, cx, cy, label, max_lines)
-        else:
-            chosen = self._multi_word(poly, cx, cy, label, max_lines)
-        if chosen is None:
+        # Try several anchor points, not just the pole of inaccessibility: on
+        # asymmetric parts (L-frames, tapered ribs) another interior spot often
+        # holds a much larger label. Keep whichever anchor allows the biggest
+        # font.
+        best: Optional[tuple[float, list[str], float, float]] = None
+        for cx, cy in self._candidate_anchors(poly):
+            if single:
+                chosen = self._single_word(poly, prepared, cx, cy, label, max_lines)
+            else:
+                chosen = self._multi_word(poly, prepared, cx, cy, label, max_lines)
+            if chosen is None:
+                continue
+            font, lines = chosen
+            if best is None or font > best[0]:
+                best = (font, lines, cx, cy)
+                if font >= opts.label_max_font_in - 1e-9:
+                    break
+        if best is None:
             return None
-        font, lines = chosen
+        font, lines, cx, cy = best
+        font, cx, cy = self._recenter_and_grow(poly, prepared, cx, cy, lines, font)
         return LabelSpec(
             text=label,
             center_x_in=cx,
@@ -171,26 +196,88 @@ class LabelPlanner:
             lines=lines,
         )
 
+    def _candidate_anchors(self, poly: Any) -> list[tuple[float, float]]:
+        """Anchor points to try: the pole of inaccessibility first, then a
+        representative point of every component left after eroding the part at
+        a few depths (each lobe of a multi-lobed part contributes one)."""
+        cx, cy, clear = _pole_of_inaccessibility(poly)
+        anchors = [(cx, cy)]
+        min_sep = max(0.05, 0.25 * clear)
+        for frac in (0.7, 0.4, 0.15):
+            eroded = poly.buffer(-frac * clear)
+            if eroded.is_empty:
+                continue
+            geoms = getattr(eroded, "geoms", [eroded])
+            for g in geoms:
+                if not isinstance(g, Polygon) or g.is_empty:
+                    continue
+                p = g.representative_point()
+                if all(
+                    math.hypot(p.x - ax, p.y - ay) > min_sep for ax, ay in anchors
+                ):
+                    anchors.append((float(p.x), float(p.y)))
+                if len(anchors) >= 8:
+                    return anchors
+        return anchors
+
+    def _recenter_and_grow(
+        self,
+        poly: Any,
+        prepared: Any,
+        cx: float,
+        cy: float,
+        lines: list[str],
+        font: float,
+    ) -> tuple[float, float, float]:
+        """Slide the block to the middle of its feasible x/y range and retry a
+        bigger font; the anchor rarely sits centred in the free space, so a
+        couple of recentering rounds usually buys extra size for free."""
+        for _ in range(2):
+            w, h = self._block_dims(lines, font)
+            y_lo, y_hi = self._feasible_y_interval(poly, cx, cy, w, h)
+            x_lo, x_hi = self._feasible_x_interval(poly, cx, cy, w, h)
+            ncx, ncy = 0.5 * (x_lo + x_hi), 0.5 * (y_lo + y_hi)
+            bigger = self._max_font(poly, prepared, ncx, ncy, lines)
+            if bigger is None or bigger <= font + 1e-6:
+                break
+            cx, cy, font = ncx, ncy, bigger
+        return font, cx, cy
+
     def _single_word(
-        self, poly: Any, cx: float, cy: float, label: str, max_lines: int
+        self,
+        poly: Any,
+        prepared: Any,
+        cx: float,
+        cy: float,
+        label: str,
+        max_lines: int,
     ) -> Optional[tuple[float, list[str]]]:
-        one = self._max_font(poly, cx, cy, [label])
+        # Single word: keep it on one line if it fits at all -- hard-splitting
+        # a word ("bul/khe/ad") reads badly. Only stack it when one line is
+        # impossible, and then use the fewest lines that fit.
+        one = self._max_font(poly, prepared, cx, cy, [label])
         if one is not None:
             return one, [label]
         for n in range(2, max_lines + 1):
             lines = _wrap(label, n)
-            font = self._max_font(poly, cx, cy, lines)
+            font = self._max_font(poly, prepared, cx, cy, lines)
             if font is not None:
                 return font, lines
         return None
 
     def _multi_word(
-        self, poly: Any, cx: float, cy: float, label: str, max_lines: int
+        self,
+        poly: Any,
+        prepared: Any,
+        cx: float,
+        cy: float,
+        label: str,
+        max_lines: int,
     ) -> Optional[tuple[float, list[str]]]:
         candidates: list[tuple[int, float, list[str]]] = []
         for n in range(1, max_lines + 1):
             lines = _wrap(label, n)
-            font = self._max_font(poly, cx, cy, lines)
+            font = self._max_font(poly, prepared, cx, cy, lines)
             if font is not None:
                 candidates.append((n, font, lines))
         if not candidates:
@@ -206,16 +293,21 @@ class LabelPlanner:
 
     def _block_dims(self, lines: list[str], font: float) -> tuple[float, float]:
         max_chars = max((len(line) for line in lines), default=1)
-        w = max_chars * LABEL_CHAR_WIDTH_RATIO * font
+        ratio = self.options.label_font_ratio or LABEL_FONT_WIDTH_RATIOS.get(
+            self.options.label_font.lower(), LABEL_CHAR_WIDTH_RATIO
+        )
+        w = max_chars * ratio * font
         h = len(lines) * LABEL_LINE_SPACING * font
         return w, h
 
-    def _max_font(self, poly: Any, cx: float, cy: float, lines: list[str]) -> Optional[float]:
+    def _max_font(
+        self, poly: Any, prepared: Any, cx: float, cy: float, lines: list[str]
+    ) -> Optional[float]:
         opts = self.options
 
         def fits(font: float) -> bool:
             w, h = self._block_dims(lines, font)
-            return poly.contains(_block(cx, cy, w, h))
+            return prepared.contains(_block(cx, cy, w, h))
 
         if not fits(opts.label_min_font_in):
             return None
@@ -235,7 +327,7 @@ class LabelPlanner:
     # a raster pass sweeps the band's full x-span, so banding two labels on
     # opposite ends of the sheet would drag the head across the whole board on
     # every raster line -- slower than two separate short bands.
-    _BAND_MAX_GAP_IN = 3.0
+    _BAND_MAX_GAP_IN = 6.0
 
     def _feasible_y_interval(
         self, poly: Any, cx: float, cy: float, w: float, h: float
@@ -263,6 +355,30 @@ class LabelPlanner:
             return ok
 
         return cy - slack(-1.0), cy + slack(+1.0)
+
+    def _feasible_x_interval(
+        self, poly: Any, cx: float, cy: float, w: float, h: float
+    ) -> tuple[float, float]:
+        """Horizontal counterpart of :meth:`_feasible_y_interval`."""
+
+        def fits(x: float) -> bool:
+            return poly.contains(_block(x, cy, w, h))
+
+        if not fits(cx):
+            return cx, cx
+        span = poly.bounds[2] - poly.bounds[0]
+
+        def slack(direction: float) -> float:
+            ok, hi = 0.0, span
+            for _ in range(14):
+                mid = 0.5 * (ok + hi)
+                if fits(cx + direction * mid):
+                    ok = mid
+                else:
+                    hi = mid
+            return ok
+
+        return cx - slack(-1.0), cx + slack(+1.0)
 
     def _align_bands(self, planned: list[tuple[Any, LabelSpec]]) -> None:
         """Group labels onto shared horizontal raster bands to minimise engrave
@@ -353,7 +469,7 @@ class LabelPlanner:
                     e = entries[i]
                     spec = e["spec"]
                     shift = centroid_x - spec.center_x_in
-                    for frac in (1.0, 0.5, 0.25):
+                    for frac in (1.0, 0.85, 0.7, 0.55, 0.4, 0.25, 0.1):
                         cx = spec.center_x_in + shift * frac
                         if e["poly"].contains(
                             _block(cx, spec.center_y_in, e["w"], e["h"])

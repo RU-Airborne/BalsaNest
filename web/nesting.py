@@ -21,10 +21,57 @@ from core import (
     polish_layout,
     preflight_capacity,
     save_outputs,
+    save_scrap_outlines,
 )
 from core.holes import detect_nestings
 
-from .previews import empty_sheet_viz, sheets_html
+from .fonts import label_width_ratio
+from .previews import empty_sheet_viz, file_url, sheets_html
+
+
+def messages_html(messages: list[str]) -> str:
+    """Warnings in red and notes in amber, so they stand out from the page."""
+    import html as html_mod
+
+    if not messages:
+        return ""
+    rows = []
+    for m in messages:
+        if m.startswith("WARNING"):
+            color = "#ff7b72"
+        elif m.startswith("NOTE"):
+            color = "#ffb454"
+        else:
+            color = "var(--body-text-color)"
+        rows.append(
+            f'<div style="color:{color};font-size:14px;line-height:1.45;'
+            f'margin:3px 0">&bull; {html_mod.escape(m)}</div>'
+        )
+    return "".join(rows)
+
+
+def print_buttons_html(files: list) -> str:
+    """One Print button per cut sheet: opens the SVG and fires the browser
+    print dialog, so a machine driven by a print-driver laser can cut straight
+    from the browser without the Inkscape stop."""
+    sheets = [
+        Path(f) for f in files
+        if str(f).endswith(".svg") and "scrap" not in Path(f).name
+    ]
+    if not sheets:
+        return ""
+    buttons = "".join(
+        '<button class="print-btn" onclick="'
+        "var w=window.open('" + file_url(f) + "');"
+        "if(w){w.addEventListener('load',function(){w.print();});}\">"
+        f"Print {f.name}</button>"
+        for f in sheets
+    )
+    return (
+        '<div class="print-row">' + buttons + "</div>"
+        '<div class="print-note">Make sure in the print dialog set the scale '
+        "to 100% and turn off any fit to page option.</div>"
+    )
 
 
 def build_viz(result, sheet, options, out_dir: Path, view: Optional[str] = None):
@@ -34,17 +81,26 @@ def build_viz(result, sheet, options, out_dir: Path, view: Optional[str] = None)
 
     ``view`` limits rendering to just "clean" or "debug" -- used by streamed
     interim updates so each frame costs one SVG write, not two."""
+    import uuid
+
     summary = layout_summary(result, sheet)
-    viz_opts = replace(options, cut_stroke=2.5)
+    viz_opts = replace(options, cut_stroke=2.5, draw_boundary=True)
+    # Fresh paths every render: interim streamed frames and the final render
+    # would otherwise reuse the same file URL, and the browser can keep
+    # serving a stale cached image for one of the two views.
+    tag = uuid.uuid4().hex[:8]
     viz: dict = {}
     if view in (None, "clean"):
+        # The clean preview never shows the overlay, regardless of the
+        # "include the debug overlay in the downloaded file" option.
         clean_files, _ = save_outputs(
-            result, sheet, out_dir / "preview" / "nest.svg", viz_opts
+            result, sheet, out_dir / f"preview_{tag}" / "nest.svg",
+            replace(viz_opts, debug_borders=False),
         )
         viz["clean"] = sheets_html(clean_files, summary)
     if view in (None, "debug"):
         dbg_files, _ = save_outputs(
-            result, sheet, out_dir / "preview_debug" / "nest.svg",
+            result, sheet, out_dir / f"preview_dbg_{tag}" / "nest.svg",
             replace(viz_opts, debug_borders=True),
         )
         viz["debug"] = sheets_html(dbg_files, summary)
@@ -69,13 +125,17 @@ def run_nest(
     sample_step: float,
     seed: float,
     label_parts: bool,
+    export_unlabeled: bool,
+    export_scrap: bool,
     label_mode: str,
+    label_font: str,
     label_color: str,
     outline_color: str,
     cut_color: str,
     cut_stroke_mode: str,
     stroke_px: float,
     stroke_in: float,
+    kerf: float,
     merge_cuts: bool,
     debug_overlay: bool,
     debug_view: bool,
@@ -99,8 +159,8 @@ def run_nest(
                 boundary = shp_wkt.loads(outline["wkt"])
                 sheet_w, sheet_h = outline["w"], outline["h"]
             messages.append(
-                f"NOTE: using a custom sheet outline "
-                f"({float(sheet_w):.2f} x {float(sheet_h):.2f} in bounding box); "
+                f"NOTE: using a custom sheet outline on a "
+                f"{float(sheet_w):.2f} x {float(sheet_h):.2f} in sheet; "
                 f"parts are only placed inside it."
             )
 
@@ -128,17 +188,41 @@ def run_nest(
         options = OutputOptions(
             label_parts=bool(label_parts),
             label_mode=label_mode,
+            label_font=label_font,
+            label_font_ratio=label_width_ratio(label_font),
             label_color=label_color,
             label_outline_color=outline_color,
             cut_color=cut_color,
             cut_stroke=cut_stroke,
+            kerf_in=float(kerf),
             merge_common_cuts=bool(merge_cuts),
             debug_borders=bool(debug_overlay),
         )
-        if merge_cuts and float(spacing) > 0:
+        if float(kerf) > 0 and float(spacing) < float(kerf):
             messages.append(
-                "NOTE: merging common cut lines only has an effect when the part "
-                "spacing is 0 -- with a gap between parts no lines coincide."
+                "WARNING: the part spacing is smaller than the kerf, so "
+                "neighbouring cut lines will overlap after compensation. "
+                "Set the spacing to at least the kerf value."
+            )
+        if merge_cuts:
+            if float(kerf) > 0 and abs(float(spacing) - float(kerf)) > 1e-9:
+                messages.append(
+                    "NOTE: with kerf compensation, common cut lines only "
+                    "coincide when the part spacing equals the kerf. Set the "
+                    "spacing to the kerf value to merge shared edges."
+                )
+            elif float(kerf) == 0 and float(spacing) > 0:
+                messages.append(
+                    "NOTE: merging common cut lines only has an effect when "
+                    "the part spacing is 0. With a gap between parts no lines "
+                    "coincide."
+                )
+        if bool(label_parts) and label_font != "sans-serif":
+            messages.append(
+                f"NOTE: labels use the font {label_font}. A computer that "
+                "opens the SVG without that font installed will substitute a "
+                "different one, which can change how the labels fit. Keep the "
+                "generic sans-serif font if the file must work everywhere."
             )
 
         requests = []
@@ -158,6 +242,8 @@ def run_nest(
         yield (
             gr.update(), "*Loading part geometry...*",
             gr.update(), gr.update(), gr.update(),
+            gr.update(visible=False),  # hide print buttons from earlier runs
+            gr.update(visible=False),  # hide the summary download too
         )
         loaded = []
         for req in requests:
@@ -190,8 +276,9 @@ def run_nest(
         def status(text: str):
             return (
                 banner_html(text) + blank_canvas_html,
-                "\n".join(f"- {m}" for m in messages) if messages else "",
-                gr.update(), gr.update(), gr.update(),
+                messages_html(messages),
+                gr.update(), gr.update(), gr.update(), gr.update(),
+                gr.update(),
             )
 
         def step_update(best, banner_text):
@@ -210,10 +297,12 @@ def run_nest(
             )
             return (
                 live_view(viz_g),
-                "\n".join(f"- {m}" for m in messages),
+                messages_html(messages),
                 gr.update(),
                 gr.update(),
                 viz_g,
+                gr.update(),
+                gr.update(),
             )
 
         if use_ga and len(items) > 2:
@@ -239,7 +328,8 @@ def run_nest(
                     break
             yield (
                 gr.update(), "*Polishing the best layout...*",
-                gr.update(), gr.update(), gr.update(),
+                gr.update(), gr.update(), gr.update(), gr.update(),
+                gr.update(),
             )
             result = polish_layout(best, sheet)
             messages.append(f"Genetic algorithm ran {gen} generation(s).")
@@ -258,7 +348,8 @@ def run_nest(
                 )
             yield (
                 gr.update(), "*Polishing the best layout...*",
-                gr.update(), gr.update(), gr.update(),
+                gr.update(), gr.update(), gr.update(), gr.update(),
+                gr.update(),
             )
             result = polish_layout(best, sheet)
 
@@ -275,7 +366,51 @@ def run_nest(
                 raise gr.Error(msg)
             messages.append(f"WARNING: {msg}")
 
+        if float(kerf) > 0:
+            from shapely.geometry import Polygon as ShpPolygon
+
+            def feature_counts(geom) -> tuple[int, int]:
+                polys = (
+                    [geom]
+                    if isinstance(geom, ShpPolygon)
+                    else [
+                        g
+                        for g in getattr(geom, "geoms", [])
+                        if isinstance(g, ShpPolygon) and not g.is_empty
+                    ]
+                )
+                return len(polys), sum(len(p.interiors) for p in polys)
+
+            damaged = set()
+            for layout in result.sheets:
+                for p in layout.placements:
+                    before = feature_counts(p.geometry)
+                    after = feature_counts(p.geometry.buffer(float(kerf) / 2.0))
+                    if after[0] != before[0] or after[1] < before[1]:
+                        damaged.add(p.item.part.display_name)
+            if damaged:
+                messages.append(
+                    "WARNING: kerf compensation closed or merged features "
+                    "narrower than the kerf on: "
+                    + ", ".join(sorted(damaged))
+                    + ". Holes or slots thinner than the kerf cannot be cut "
+                    "and their cut lines were dropped."
+                )
+
         files, label_warnings = save_outputs(result, sheet, out_dir / "nest.svg", options)
+        if bool(label_parts) and bool(export_unlabeled):
+            # Cut-only twins of every sheet, for re-cutting a part without
+            # sitting through the engraving pass again. The summary JSON is
+            # identical, so only the SVGs are added.
+            plain_files, _ = save_outputs(
+                result, sheet, out_dir / "nest_cuts_only.svg",
+                replace(options, label_parts=False),
+            )
+            files = files + [f for f in plain_files if f.suffix == ".svg"]
+        if bool(export_scrap):
+            scrap_files = save_scrap_outlines(result, sheet, out_dir / "nest_scrap.svg")
+            if scrap_files:
+                files = files + scrap_files
         if label_warnings:
             messages.append(
                 "WARNING: no label engraved on: "
@@ -291,8 +426,17 @@ def run_nest(
 
         summary, viz = build_viz(result, sheet, options, out_dir)
 
-        msg_md = "\n".join(f"- {m}" for m in messages) if messages else ""
-        yield live_view(viz), msg_md, [str(f) for f in files], summary, viz
+        summary_path = next(
+            (f for f in files if str(f).endswith(".json")), None
+        )
+        panel_files = [str(f) for f in files if not str(f).endswith(".json")]
+        yield (
+            live_view(viz), messages_html(messages),
+            panel_files, summary, viz,
+            gr.update(value=print_buttons_html(files), visible=True),
+            gr.update(value=str(summary_path), visible=True)
+            if summary_path else gr.update(visible=False),
+        )
 
     except gr.Error:
         raise
