@@ -104,9 +104,17 @@ they pack with full rotation freedom.
 
 - **Inkscape-ready grouping** — every part and its label are placed in a single Inkscape group, so manual layout adjustments move the geometry and label together.
 
-## Install
+## Download and Run
 
-You need **Python 3.10 or newer** ([python.org](https://www.python.org/downloads/)).
+Download a ready to run build from the
+[Releases](https://github.com/RU-Airborne/BalsaNest/releases) page for Windows and macOS. 
+Unzip, keep `balsanest_defaults.json` next to the executable,
+and run it. The browser opens on its own. On macOS, the first launch is
+blocked, right click the file, choose Open, and confirm.
+
+## Build from Source Code
+
+To run from source instead, you need **Python 3.10 or newer** ([python.org](https://www.python.org/downloads/)).
 Open a terminal in the BalsaNest folder, then:
 
 ### Windows (PowerShell)
