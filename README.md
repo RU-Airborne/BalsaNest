@@ -1,4 +1,9 @@
+<p align="center">
+  <img src="balsanest_logo.png" alt="BalsaNest logo" width="150">
+</p>
+
 # BalsaNest
+
 BalsaNest arranges part drawings on wood sheets. It packs parts closely to reduce waste, keeps each part's
 grain orientation where you specify it, engraves part names, and writes SVG files. All dimensions
 are in inches.
@@ -112,7 +117,7 @@ Unzip, keep `balsanest_defaults.json` next to the executable,
 and run it. The browser opens on its own. On macOS, the first launch is
 blocked, right click the file, choose Open, and confirm.
 
-## Build from Source Code
+## Run from Source Code
 
 To run from source instead, you need **Python 3.10 or newer** ([python.org](https://www.python.org/downloads/)).
 Open a terminal in the BalsaNest folder, then:

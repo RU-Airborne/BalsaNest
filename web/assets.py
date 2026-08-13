@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from base64 import b64encode
+from pathlib import Path
+
 import gradio as gr
 
 FORCE_DARK_JS = """
@@ -11,6 +14,26 @@ FORCE_DARK_JS = """
   }
 }
 """
+
+def logo_header_html() -> str:
+    """Header block: nest logo beside the BalsaNest title."""
+    logo = Path(__file__).with_name("balsanest_logo.png")
+    try:
+        b64 = b64encode(logo.read_bytes()).decode()
+        img = (
+            f'<img src="data:image/png;base64,{b64}" alt="BalsaNest logo" '
+            'style="height:104px;width:auto;flex:none">'
+        )
+    except OSError:  # logo not bundled: fall back to text-only header
+        img = ""
+    return (
+        '<div style="display:flex;align-items:center;gap:18px">'
+        f"{img}"
+        '<div><h1 style="margin:0 0 4px;line-height:1.1;font-size:44px">BalsaNest</h1>'
+        '<p style="margin:0">All dimensions are in <b>inches</b>.</p></div>'
+        "</div>"
+    )
+
 
 CSS = """
 .gradio-container { max-width: 1440px !important; margin: 0 auto !important; }

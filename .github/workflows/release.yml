@@ -30,6 +30,7 @@ jobs:
           --collect-all gradio_client
           --collect-all safehttpx
           --collect-all groovy
+          --add-data "web/balsanest_logo.png;web"
           webui.py
 
       - name: Package
@@ -72,6 +73,7 @@ jobs:
           --collect-all gradio_client
           --collect-all safehttpx
           --collect-all groovy
+          --add-data "web/balsanest_logo.png:web"
           webui.py
 
       - name: Package

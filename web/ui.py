@@ -13,6 +13,7 @@ from .assets import (
     OR_DIVIDER_HTML,
     SHEET_GRAIN_HTML,
     font_preview_html,
+    logo_header_html,
 )
 from .fonts import font_choices
 from .jobs import load_job, save_job
@@ -41,7 +42,7 @@ def build_ui() -> gr.Blocks:
 
         # ---------------- top: visualizer ----------------
         with gr.Row(elem_id="header-row"):
-            gr.Markdown("# BalsaNest\nAll dimensions are in **inches**.")
+            gr.HTML(logo_header_html())
             stop_ga_btn = gr.Button(
                 "Stop evolving", size="md", scale=0, min_width=140,
                 variant="stop", visible=False,
