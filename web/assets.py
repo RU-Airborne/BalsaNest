@@ -21,22 +21,71 @@ def logo_header_html() -> str:
     try:
         b64 = b64encode(logo.read_bytes()).decode()
         img = (
+            '<div class="logo-glow">'
             f'<img src="data:image/png;base64,{b64}" alt="BalsaNest logo" '
-            'style="height:104px;width:auto;flex:none">'
+            'style="height:104px;width:auto;flex:none"></div>'
         )
     except OSError:  # logo not bundled: fall back to text-only header
         img = ""
+    github = (
+        '<a class="gh-link" href="https://github.com/RU-Airborne/BalsaNest" '
+        'target="_blank" rel="noopener" title="BalsaNest on GitHub" '
+        'aria-label="BalsaNest on GitHub">'
+        '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" '
+        'aria-hidden="true">'
+        '<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17'
+        ".55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94"
+        "-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87"
+        " 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59"
+        ".82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27"
+        "s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82"
+        " 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01"
+        ' 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>'
+        "</svg><span>Open GitHub project</span></a>"
+    )
     return (
         '<div style="display:flex;align-items:center;gap:18px">'
         f"{img}"
         '<div><h1 style="margin:0 0 4px;line-height:1.1;font-size:44px">BalsaNest</h1>'
         '<p style="margin:0">All dimensions are in <b>inches</b>.</p></div>'
+        f"{github}"
         "</div>"
     )
 
 
 CSS = """
 .gradio-container { max-width: 1440px !important; margin: 0 auto !important; }
+/* Accent-red glow tracing the logo silhouette, breathing slowly. Layered
+   drop-shadows follow the PNG's alpha edge, so the glow reads as backlight
+   on the artwork rather than a shape parked behind it. The header containers
+   must not clip the shadow bleed. */
+#header-row, #header-row .block, #header-row .html-container,
+#header-row .prose { overflow: visible !important; }
+.logo-glow { flex: none; display: flex; }
+/* Small GitHub project link at the right edge of the header: rounded rect
+   with the octocat mark and a text label. */
+.gh-link {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-color-primary);
+  border-radius: 6px;
+  background: var(--background-fill-secondary);
+  color: var(--body-text-color);
+  font-size: 12px; white-space: nowrap;
+  opacity: 0.85;
+  text-decoration: none !important;
+}
+.gh-link:hover {
+  border-color: #be2e35;
+  color: #be2e35;
+  opacity: 1;
+}
+.logo-glow img {
+  filter: drop-shadow(0 0 6px rgba(190, 46, 53, 0.85))
+          drop-shadow(0 0 18px rgba(190, 46, 53, 0.5))
+          drop-shadow(0 0 42px rgba(190, 46, 53, 0.28));
+}
 .part-card { border: 1px solid var(--border-color-primary); border-radius: 10px;
              padding: 8px 12px; margin-bottom: 8px; height: 100%; }
 .part-thumb img { background: #fff; border-radius: 8px; }
@@ -52,26 +101,6 @@ CSS = """
   box-shadow: 0 8px 28px rgba(0,0,0,.45), 0 2px 8px rgba(0,0,0,.35);
 }
 .empty-note { text-align: center; opacity: 0.8; }
-/* Print straight to a print-driver laser, skipping Inkscape. */
-.print-row {
-  display: flex; gap: 10px; flex-wrap: wrap; margin: 6px 0 2px;
-  justify-content: center;
-}
-.print-btn {
-  background: #be2e35;
-  color: #fff;
-  border: 1px solid #a3272d;
-  border-radius: var(--button-large-radius, 8px);
-  padding: 0 16px; height: 34px; line-height: 32px;
-  font-size: 14px; cursor: pointer; white-space: nowrap;
-}
-.print-btn:hover { background: #a3272d; }
-.print-note {
-  font-size: var(--block-info-text-size);
-  color: var(--block-info-text-color);
-  margin-bottom: 6px;
-  text-align: center;
-}
 /* Component titles (sliders, dropdowns, colour pickers) render in the muted
    block-title colour while checkbox and accordion labels use the strong body
    colour. Use the strong colour everywhere. */

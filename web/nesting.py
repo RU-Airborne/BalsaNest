@@ -50,30 +50,6 @@ def messages_html(messages: list[str]) -> str:
     return "".join(rows)
 
 
-def print_buttons_html(files: list) -> str:
-    """One Print button per cut sheet: opens the SVG and fires the browser
-    print dialog, so a machine driven by a print-driver laser can cut straight
-    from the browser without the Inkscape stop."""
-    sheets = [
-        Path(f) for f in files
-        if str(f).endswith(".svg") and "scrap" not in Path(f).name
-    ]
-    if not sheets:
-        return ""
-    buttons = "".join(
-        '<button class="print-btn" onclick="'
-        "var w=window.open('" + file_url(f) + "');"
-        "if(w){w.addEventListener('load',function(){w.print();});}\">"
-        f"Print {f.name}</button>"
-        for f in sheets
-    )
-    return (
-        '<div class="print-row">' + buttons + "</div>"
-        '<div class="print-note">Make sure in the print dialog set the scale '
-        "to 100% and turn off any fit to page option.</div>"
-    )
-
-
 def build_viz(result, sheet, options, out_dir: Path, view: Optional[str] = None):
     """Browser-preview copies of a layout: thick high-contrast strokes
     (downloadable files keep the real laser strokes). Rulers are added as
@@ -147,6 +123,19 @@ def run_nest(
 
     messages: list[str] = []
     try:
+        # Instant feedback: the red banner shows the moment Start is pressed,
+        # before any geometry work begins.
+        try:
+            placeholder_canvas = empty_sheet_viz(None, float(sheet_w), float(sheet_h))
+        except Exception:
+            placeholder_canvas = ""
+        yield (
+            '<div class="evolve-banner">Loading part drawings...</div>'
+            + placeholder_canvas,
+            "",
+            gr.update(), gr.update(), gr.update(),
+            gr.update(visible=False),  # hide the summary download too
+        )
         boundary = None
         if outline:
             if outline.get("kind") == "file":
@@ -242,7 +231,6 @@ def run_nest(
         yield (
             gr.update(), "*Loading part geometry...*",
             gr.update(), gr.update(), gr.update(),
-            gr.update(visible=False),  # hide print buttons from earlier runs
             gr.update(visible=False),  # hide the summary download too
         )
         loaded = []
@@ -278,7 +266,6 @@ def run_nest(
                 banner_html(text) + blank_canvas_html,
                 messages_html(messages),
                 gr.update(), gr.update(), gr.update(), gr.update(),
-                gr.update(),
             )
 
         def step_update(best, banner_text):
@@ -301,7 +288,6 @@ def run_nest(
                 gr.update(),
                 gr.update(),
                 viz_g,
-                gr.update(),
                 gr.update(),
             )
 
@@ -329,7 +315,6 @@ def run_nest(
             yield (
                 gr.update(), "*Polishing the best layout...*",
                 gr.update(), gr.update(), gr.update(), gr.update(),
-                gr.update(),
             )
             result = polish_layout(best, sheet)
             messages.append(f"Genetic algorithm ran {gen} generation(s).")
@@ -349,7 +334,6 @@ def run_nest(
             yield (
                 gr.update(), "*Polishing the best layout...*",
                 gr.update(), gr.update(), gr.update(), gr.update(),
-                gr.update(),
             )
             result = polish_layout(best, sheet)
 
@@ -433,7 +417,6 @@ def run_nest(
         yield (
             live_view(viz), messages_html(messages),
             panel_files, summary, viz,
-            gr.update(value=print_buttons_html(files), visible=True),
             gr.update(value=str(summary_path), visible=True)
             if summary_path else gr.update(visible=False),
         )

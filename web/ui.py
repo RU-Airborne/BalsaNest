@@ -73,7 +73,6 @@ def build_ui() -> gr.Blocks:
                 files_out = gr.Files(
                     label="Download laser cut ready files",
                 )
-                print_html = gr.HTML(padding=False, visible=False)
             with gr.Column(scale=1):
                 with gr.Accordion("Layout summary json", open=False):
                     summary_dl = gr.DownloadButton(
@@ -656,7 +655,7 @@ def build_ui() -> gr.Blocks:
             ],
             outputs=[
                 result_html, messages_md, files_out, summary_json, viz_state,
-                print_html, summary_dl,
+                summary_dl,
             ],
             show_progress="hidden",
         )

@@ -30,11 +30,11 @@ they pack with full rotation freedom.
 - **Easy to use** — drag and drop your CAD exports straight into the browser
   and press Start.
 
-- **No Inkscape needed** — SVG, DXF, and PDF are read directly, no conversion
+- **Multi File Format Support** — SVG, DXF, and PDF are read directly, no conversion
   step or manual cleanup. DXFs get their units read from the file (with a
   per-part override if a drawing was saved without them), and CAD segment
   soup is stitched back into closed shapes so material and holes are
-  detected correctly. Send the nest result  directly to the laser cutter with a print dialog after nesting.
+  detected correctly.
 
 - **Auto watermark removal** — SolidWorks educational watermarks are stripped
   automatically, and multi-view exports are collapsed to a single part.

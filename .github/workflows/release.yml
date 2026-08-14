@@ -37,8 +37,7 @@ jobs:
       - name: Package
         run: |
           copy balsanest_defaults.json dist\
-          copy README.md dist\
-          Compress-Archive -Path dist\BalsaNest.exe, dist\balsanest_defaults.json, dist\README.md -DestinationPath BalsaNest-windows.zip
+          Compress-Archive -Path dist\BalsaNest.exe, dist\balsanest_defaults.json -DestinationPath BalsaNest-windows.zip
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -79,8 +78,8 @@ jobs:
 
       - name: Package
         run: |
-          cp balsanest_defaults.json README.md dist/
-          cd dist && zip -r ../BalsaNest-macos-apple-silicon.zip BalsaNest balsanest_defaults.json README.md
+          cp balsanest_defaults.json dist/
+          cd dist && zip -r ../BalsaNest-macos-apple-silicon.zip BalsaNest balsanest_defaults.json
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
