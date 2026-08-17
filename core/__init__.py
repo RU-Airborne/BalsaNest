@@ -29,7 +29,7 @@ from .config import (
     load_defaults,
     output_options_from_config,
 )
-from .constants import EPS, PX_PER_INCH
+from .constants import DEFAULT_WELD_IN, EPS, PX_PER_INCH
 from .errors import BalsaNestError
 from .holes import (
     detect_nestings,
@@ -43,6 +43,7 @@ from .importer import (
     SvgPartImporter,
     load_part,
     load_sheet_boundary,
+    repair_doubled_contours,
 )
 from .labels import LabelPlanner, LabelSpec, build_label_specs
 from .models import (
@@ -84,10 +85,14 @@ from .packing import (
 )
 from .svg_geometry import (
     build_collision_geometry,
+    duplicated_line_stats,
+    geometry_to_paths,
     mirror_path_x,
     parse_svg_length_inches,
+    sampled_polylines,
     source_scale_from_svg,
     transform_path_for_placement,
+    weld_polylines_to_geometry,
 )
 from .variants import allowed_rotations, build_variants, make_items
 
@@ -95,6 +100,7 @@ __all__ = [
     "BalsaNestError",
     "EPS",
     "PX_PER_INCH",
+    "DEFAULT_WELD_IN",
     # models
     "SheetSpec",
     "OutputOptions",
@@ -112,12 +118,17 @@ __all__ = [
     "source_scale_from_svg",
     "mirror_path_x",
     "build_collision_geometry",
+    "sampled_polylines",
+    "duplicated_line_stats",
+    "weld_polylines_to_geometry",
+    "geometry_to_paths",
     "transform_path_for_placement",
     "SvgPartImporter",
     "DxfPartImporter",
     "PdfPartImporter",
     "load_part",
     "load_sheet_boundary",
+    "repair_doubled_contours",
     # variants
     "allowed_rotations",
     "build_variants",

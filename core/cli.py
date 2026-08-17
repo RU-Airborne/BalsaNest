@@ -15,6 +15,7 @@ from .config import (
     load_defaults,
     output_options_from_config,
 )
+from .constants import DEFAULT_WELD_IN
 from .errors import BalsaNestError
 from .holes import detect_nestings
 from .importer import load_part
@@ -222,6 +223,7 @@ def interactive_specs() -> JobSpec:
         seed=seed,
         output=output,
         options=options,
+        weld_distance=float(defaults.get("weld_distance", DEFAULT_WELD_IN)),
     )
 
 
@@ -264,7 +266,7 @@ def run_job(job: JobSpec) -> list[Path]:
     print("\nLoading and validating SVG geometry...")
     parts: list[LoadedPart] = []
     for req in job.requests:
-        part = load_part(req, job.sample_step)
+        part = load_part(req, job.sample_step, job.weld_distance)
         parts.append(part)
         print_loaded_part(part, sheet)
 
@@ -357,6 +359,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-hole-nesting", action="store_true", help="Do not place small parts inside scrap cut-outs.")
     p.add_argument("--max-sheets", type=int, help="Hard cap on the number of stock sheets. Overrides config.")
     p.add_argument("--allow-partial", action="store_true", help="Write whatever fits instead of erroring.")
+    p.add_argument(
+        "--weld",
+        type=float,
+        metavar="INCHES",
+        help=(
+            "Distance across which drawn lines count as the same cut, repairing "
+            "exports whose every contour is drawn twice (3D exports of tapered "
+            "parts). Default 0.02 in; 0 disables the repair."
+        ),
+    )
     return p
 
 
@@ -365,6 +377,10 @@ def apply_overrides(job: JobSpec, args: argparse.Namespace) -> JobSpec:
         job.output = args.output.expanduser().resolve()
     if args.allow_partial:
         job.allow_partial = True
+    if args.weld is not None:
+        if args.weld < 0:
+            raise BalsaNestError("--weld must be >= 0.")
+        job.weld_distance = args.weld
 
     sheet_overrides: dict[str, Any] = {}
     if args.max_sheets is not None:
@@ -404,7 +420,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print("\nValidating SVG geometry...")
             parts = []
             for req in job.requests:
-                part = load_part(req, job.sample_step)
+                part = load_part(req, job.sample_step, job.weld_distance)
                 parts.append(part)
                 print_loaded_part(part, job.sheet)
             for warning in preflight_capacity(parts, make_items(parts, job.sheet), job.sheet):

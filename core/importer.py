@@ -14,13 +14,20 @@ from typing import Any, Optional
 from shapely.affinity import translate as shp_translate
 from shapely.geometry import GeometryCollection, MultiPolygon, Polygon
 
+from .constants import DEFAULT_WELD_IN
 from .errors import BalsaNestError
 from .models import LoadedPart, PartRequest
 from .svg_geometry import (
     build_collision_geometry,
+    duplicated_line_stats,
+    geometry_to_paths,
     import_svgpathtools,
+    sampled_polylines,
     source_scale_from_svg,
+    weld_polylines_to_geometry,
 )
+
+DOUBLED_LINE_FRACTION = 0.10
 
 
 def _solid_islands(geometry: Any) -> list[Any]:
@@ -130,14 +137,84 @@ def dedupe_identical_islands(
     return geometry, paths, note
 
 
+def repair_doubled_contours(
+    geometry: Any,
+    paths: list[Any],
+    vb_min_x: float,
+    vb_min_y: float,
+    units_to_in: float,
+    sample_step_in: float,
+    weld_in: float,
+) -> tuple[Any, list[Any], Optional[str]]:
+    """Collapse a drawing whose every contour is drawn twice down to one.
+
+    A tapered part -- a wing or stabiliser rib between two different stations --
+    has two different faces, so a drawing made from its 3D body carries both
+    outlines, a few thousandths of an inch apart. Every contour is doubled: the
+    outline, and each lightening hole. The even-odd rule then reads the pair as
+    a contour with another contour just inside it, i.e. a hairline ring of
+    material enclosing a hole the size of the whole part, and every real cut-out
+    inverts with it. Nesting fills the "hole" that is actually solid balsa.
+
+    Rebuilding from the raw strokes with anything within ``weld_in`` welded
+    together recovers the single contour set. Cut paths are replaced by the
+    welded ones too, so the laser stops cutting each line twice and the packed
+    geometry and the emitted paths cannot disagree.
+
+    Only drawings that are genuinely doubled are touched, and the rebuild is
+    kept only if it still spans the same extents -- an open-contour part whose
+    strokes are all thinner than the weld would otherwise vanish."""
+    if weld_in <= 0:
+        return geometry, paths, None
+
+    polylines = sampled_polylines(
+        paths, vb_min_x, vb_min_y, units_to_in, sample_step_in
+    )
+    if len(polylines) < 2:
+        return geometry, paths, None
+
+    fraction, max_gap = duplicated_line_stats(polylines, weld_in)
+    if fraction < DOUBLED_LINE_FRACTION:
+        return geometry, paths, None
+
+    welded = weld_polylines_to_geometry(polylines, weld_in)
+    if welded.is_empty:
+        return geometry, paths, None
+
+    before, after = geometry.bounds, welded.bounds
+    if max(abs(before[i] - after[i]) for i in range(4)) > weld_in:
+        return geometry, paths, None
+
+    welded_paths = geometry_to_paths(welded, vb_min_x, vb_min_y, units_to_in)
+    if not welded_paths:
+        return geometry, paths, None
+
+    note = (
+        f"{fraction * 100:.0f}% of the drawn lines retraced other lines, indicating "
+        f"that each contour was drawn twice. This is typically caused by a 3D export "
+        f"of a tapered part, with one outline per face. BalsaNest is repairing this "
+        f"by welding contours up to {max_gap:.4f} in apart into a single cut line "
+        f"(weld distance {weld_in:g} in), following the outermost edge of each pair "
+        f"so each edge is cut only once. In most cases, this repair is sufficient for "
+        f"laser cutting. The weld distance can be adjusted under Laser Settings → "
+        f"Duplicate Line Welding Tolerance (in). To completely avoid the issue, fix "
+        f"the duplicated contours in the drawing and re-export the part without "
+        f"duplicate lines."
+    )
+    return welded, welded_paths, note
+
+
 class SvgPartImporter:
     """Reads one SVG per :class:`PartRequest`. Stateless apart from the sampling
     step, so a single instance can load an entire job."""
 
-    def __init__(self, sample_step_in: float) -> None:
+    def __init__(
+        self, sample_step_in: float, weld_in: float = DEFAULT_WELD_IN
+    ) -> None:
         if sample_step_in <= 0:
             raise BalsaNestError("sample_step must be > 0.")
         self.sample_step_in = sample_step_in
+        self.weld_in = weld_in
 
     def load(self, req: PartRequest) -> LoadedPart:
         req.validate()
@@ -162,7 +239,14 @@ class SvgPartImporter:
             raise BalsaNestError(f"{req.file}: no supported vector geometry found.")
 
         return _finalize_part(
-            req, paths, vb_min_x, vb_min_y, units_to_in, self.sample_step_in, []
+            req,
+            paths,
+            vb_min_x,
+            vb_min_y,
+            units_to_in,
+            self.sample_step_in,
+            [],
+            req.weld_distance if req.weld_distance is not None else self.weld_in,
         )
 
 
@@ -174,12 +258,21 @@ def _finalize_part(
     units_to_in: float,
     sample_step_in: float,
     notes: list[str],
+    weld_in: float = DEFAULT_WELD_IN,
 ) -> LoadedPart:
-    """Shared tail of every importer: collision geometry, multi-view dedupe,
-    exact vector bounding boxes, and normalization to the part's lower-left."""
+    """Shared tail of every importer: collision geometry, doubled-contour
+    repair, multi-view dedupe, exact vector bounding boxes, and normalization to
+    the part's lower-left."""
     geometry = build_collision_geometry(
         paths, vb_min_x, vb_min_y, units_to_in, sample_step_in
     )
+
+    # Tapered parts exported from 3D: every contour drawn once per face.
+    geometry, paths, weld_note = repair_doubled_contours(
+        geometry, paths, vb_min_x, vb_min_y, units_to_in, sample_step_in, weld_in
+    )
+    if weld_note:
+        notes = notes + [weld_note]
 
     # Multi-view exports: collapse identical disconnected copies to one.
     geometry, paths, dedupe_note = dedupe_identical_islands(
@@ -252,10 +345,13 @@ class DxfPartImporter:
     dedupe, exact bboxes, output transforms) applies unchanged. DXF is y-up and
     SVG is y-down, so y is negated to keep the drawing visually identical."""
 
-    def __init__(self, sample_step_in: float) -> None:
+    def __init__(
+        self, sample_step_in: float, weld_in: float = DEFAULT_WELD_IN
+    ) -> None:
         if sample_step_in <= 0:
             raise BalsaNestError("sample_step must be > 0.")
         self.sample_step_in = sample_step_in
+        self.weld_in = weld_in
 
     def load(self, req: PartRequest) -> LoadedPart:
         req.validate()
@@ -333,7 +429,14 @@ class DxfPartImporter:
             )
 
         return _finalize_part(
-            req, paths, 0.0, 0.0, units_to_in, self.sample_step_in, notes
+            req,
+            paths,
+            0.0,
+            0.0,
+            units_to_in,
+            self.sample_step_in,
+            notes,
+            req.weld_distance if req.weld_distance is not None else self.weld_in,
         )
 
 
@@ -363,10 +466,13 @@ class PdfPartImporter:
     _WATERMARK_BAND_IN = 0.75   # strip above the bottom page edge to inspect
     _WATERMARK_MAX_H_IN = 0.35  # taller shapes in the band are real geometry
 
-    def __init__(self, sample_step_in: float) -> None:
+    def __init__(
+        self, sample_step_in: float, weld_in: float = DEFAULT_WELD_IN
+    ) -> None:
         if sample_step_in <= 0:
             raise BalsaNestError("sample_step must be > 0.")
         self.sample_step_in = sample_step_in
+        self.weld_in = weld_in
 
     def load(self, req: PartRequest) -> LoadedPart:
         req.validate()
@@ -408,7 +514,14 @@ class PdfPartImporter:
         paths = self._drop_bottom_watermark(paths, page_height_pt, notes)
 
         return _finalize_part(
-            req, paths, 0.0, 0.0, _PDF_POINTS_TO_INCH, self.sample_step_in, notes
+            req,
+            paths,
+            0.0,
+            0.0,
+            _PDF_POINTS_TO_INCH,
+            self.sample_step_in,
+            notes,
+            req.weld_distance if req.weld_distance is not None else self.weld_in,
         )
 
     @staticmethod
@@ -532,7 +645,10 @@ def _document_size_in(file: Path) -> Optional[tuple[float, float]]:
 
 
 def load_sheet_boundary(
-    file: Path, sample_step_in: float, units: Optional[str] = None
+    file: Path,
+    sample_step_in: float,
+    units: Optional[str] = None,
+    weld_in: float = DEFAULT_WELD_IN,
 ) -> tuple[Any, float, float]:
     """Load a stock-sheet outline drawing (SVG/DXF/PDF) into a shapely polygon
     for :attr:`SheetSpec.boundary`.
@@ -547,7 +663,7 @@ def load_sheet_boundary(
     DXF has no page, so the sheet falls back to the outline's bounding box
     with the polygon normalized to start at (0, 0)."""
     req = PartRequest(file=Path(file), quantity=1, grain="free", units=units)
-    part = load_part(req, sample_step_in)
+    part = load_part(req, sample_step_in, weld_in)
     islands = _solid_islands(part.geometry)
     if not islands:
         raise BalsaNestError(
@@ -583,11 +699,13 @@ def load_sheet_boundary(
     return boundary, maxx - minx, maxy - miny
 
 
-def load_part(req: PartRequest, sample_step_in: float) -> LoadedPart:
+def load_part(
+    req: PartRequest, sample_step_in: float, weld_in: float = DEFAULT_WELD_IN
+) -> LoadedPart:
     """Load a part file, dispatching on its extension (.svg, .dxf or .pdf)."""
     suffix = req.file.suffix.lower()
     if suffix == ".dxf":
-        return DxfPartImporter(sample_step_in).load(req)
+        return DxfPartImporter(sample_step_in, weld_in).load(req)
     if suffix == ".pdf":
-        return PdfPartImporter(sample_step_in).load(req)
-    return SvgPartImporter(sample_step_in).load(req)
+        return PdfPartImporter(sample_step_in, weld_in).load(req)
+    return SvgPartImporter(sample_step_in, weld_in).load(req)

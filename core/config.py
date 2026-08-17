@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .constants import DEFAULT_WELD_IN
 from .errors import BalsaNestError
 from .models import JobSpec, OutputOptions, PartRequest, SheetSpec
 
@@ -87,6 +88,10 @@ def config_to_specs(config: dict[str, Any], config_dir: Path) -> JobSpec:
     if sample_step <= 0:
         raise BalsaNestError("sample_step must be > 0.")
 
+    weld_distance = float(config.get("weld_distance", DEFAULT_WELD_IN))
+    if weld_distance < 0:
+        raise BalsaNestError("weld_distance must be >= 0.")
+
     # Optional non-rectangular stock: an outline drawing whose largest closed
     # contour becomes the sheet shape (its size overrides width/height).
     boundary = None
@@ -97,7 +102,9 @@ def config_to_specs(config: dict[str, Any], config_dir: Path) -> JobSpec:
         outline_path = Path(outline_raw)
         if not outline_path.is_absolute():
             outline_path = (config_dir / outline_path).resolve()
-        boundary, sheet_w, sheet_h = load_sheet_boundary(outline_path, sample_step)
+        boundary, sheet_w, sheet_h = load_sheet_boundary(
+            outline_path, sample_step, weld_in=weld_distance
+        )
     else:
         sheet_w = float(sheet_cfg["width"])
         sheet_h = float(sheet_cfg["height"])
@@ -127,6 +134,7 @@ def config_to_specs(config: dict[str, Any], config_dir: Path) -> JobSpec:
         rotations = raw.get("rotations")
         rotations_tuple = tuple(float(v) for v in rotations) if rotations is not None else None
         units = raw.get("units")
+        part_weld = raw.get("weld_distance")
         req = PartRequest(
             file=file_path,
             quantity=int(raw.get("quantity", 1)),
@@ -135,6 +143,7 @@ def config_to_specs(config: dict[str, Any], config_dir: Path) -> JobSpec:
             rotations=rotations_tuple,
             name=raw.get("name"),
             units=str(units).lower() if units is not None else None,
+            weld_distance=float(part_weld) if part_weld is not None else None,
         )
         req.validate()
         requests.append(req)
@@ -156,6 +165,7 @@ def config_to_specs(config: dict[str, Any], config_dir: Path) -> JobSpec:
         output=output_raw,
         options=output_options_from_config(config),
         allow_partial=bool(config.get("allow_partial", False)),
+        weld_distance=weld_distance,
     )
 
 

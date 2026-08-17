@@ -5,18 +5,35 @@ from pathlib import Path
 
 import gradio as gr
 
+FORCE_DARK_HEAD = (
+    "<script>(function(){"
+    "var u=new URL(window.location);"
+    "if(u.searchParams.get('__theme')!=='dark'){"
+    "u.searchParams.set('__theme','dark');"
+    "window.location.replace(u.href);}"
+    "})();</script>"
+)
+
+
 FORCE_DARK_JS = """
 () => {
   const url = new URL(window.location);
   if (url.searchParams.get('__theme') !== 'dark') {
     url.searchParams.set('__theme', 'dark');
-    window.location.href = url.href;
+    window.history.replaceState({}, '', url.href);
   }
+  document.documentElement.classList.add('dark');
+  document.body.classList.add('dark');
 }
 """
 
+REPO_URL = "https://github.com/RU-Airborne/BalsaNest"
+AUTHOR_URL = "https://github.com/scavenx"
+DISCORD_HANDLE = "scaaavx"
+
+
 def logo_header_html() -> str:
-    """Header block: nest logo beside the BalsaNest title."""
+    """Header block: nest logo beside the BalsaNest title and its credit line."""
     logo = Path(__file__).with_name("balsanest_logo.png")
     try:
         b64 = b64encode(logo.read_bytes()).decode()
@@ -27,8 +44,23 @@ def logo_header_html() -> str:
         )
     except OSError:  # logo not bundled: fall back to text-only header
         img = ""
-    github = (
-        '<a class="gh-link" href="https://github.com/RU-Airborne/BalsaNest" '
+    return (
+        '<div style="display:flex;align-items:center;gap:18px">'
+        f"{img}"
+        '<div class="title-block">'
+        '<h1 style="line-height:1.1;font-size:44px">BalsaNest</h1>'
+        '<p>&nbsp;Developed by '
+        f'<a class="author-link" href="{AUTHOR_URL}" target="_blank" '
+        'rel="noopener">Scaven X</a> at RU Airborne</p></div>'
+        f"{github_link_html()}"
+        "</div>"
+    )
+
+
+def github_link_html() -> str:
+    """The repository link at the right edge of the header."""
+    return (
+        f'<a class="gh-link" href="{REPO_URL}" '
         'target="_blank" rel="noopener" title="BalsaNest on GitHub" '
         'aria-label="BalsaNest on GitHub">'
         '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" '
@@ -41,15 +73,17 @@ def logo_header_html() -> str:
         "s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82"
         " 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01"
         ' 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>'
-        "</svg><span>Open GitHub project</span></a>"
+        "</svg><span>Open project on GitHub</span></a>"
     )
+
+
+def footer_html() -> str:
+    """Bug-report line closing the page."""
     return (
-        '<div style="display:flex;align-items:center;gap:18px">'
-        f"{img}"
-        '<div><h1 style="margin:0 0 4px;line-height:1.1;font-size:44px">BalsaNest</h1>'
-        '<p style="margin:0">All dimensions are in <b>inches</b>.</p></div>'
-        f"{github}"
-        "</div>"
+        '<div class="site-footer">Found a bug? DM Scaven X '
+        f"(<code>{DISCORD_HANDLE}</code>) on Discord, or&#8202;"
+        f'<a href="{REPO_URL}/issues" target="_blank" rel="noopener">'
+        "open an issue on GitHub</a>.</div>"
     )
 
 
@@ -81,10 +115,55 @@ CSS = """
   color: #be2e35;
   opacity: 1;
 }
+/* Bug-report line closing the page. Gradio's own footer is hidden further
+   down, so this is a plain div rather than a <footer>. */
+.site-footer {
+  margin: 22px 0 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-color-primary);
+  text-align: center;
+  font-size: 13px;
+  opacity: 0.75;
+}
+.site-footer a { color: var(--body-text-color); text-decoration: underline;
+                 text-underline-offset: 2px; }
+.site-footer a:hover { color: #be2e35; }
+.site-footer code {
+  font-size: 12px; padding: 1px 5px; border-radius: 4px;
+  background: var(--background-fill-secondary);
+}
+/* Title and credit line share one left edge: Gradio's prose styles otherwise
+   indent the heading and the paragraph by different amounts. */
+.title-block h1, .title-block p {
+  margin: 0 !important; padding: 0 !important;
+  text-indent: 0 !important; text-align: left !important;
+}
+.title-block h1 { margin-bottom: 4px !important; }
+/* An inline link inherits the theme's link box model, which pads it away from
+   the words on either side. This one has to sit in the sentence. */
+.author-link {
+  display: inline !important;
+  margin: 0 !important; padding: 0 !important; border: 0 !important;
+  background: none !important;
+  color: var(--body-text-color);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.author-link:hover { color: #be2e35; }
+/* The logo's halo, kept as two custom properties so the radius and burn can be
+   retuned in one place. The three layered shadows follow the PNG's alpha edge,
+   so it reads as backlight on the artwork rather than a shape behind it. */
+:root {
+  --logo-glow-r: 18;      /* px, middle halo radius */
+  --logo-glow-s: 0.7;     /* 0-1; the inner layer saturates at 1 */
+}
 .logo-glow img {
-  filter: drop-shadow(0 0 6px rgba(190, 46, 53, 0.85))
-          drop-shadow(0 0 18px rgba(190, 46, 53, 0.5))
-          drop-shadow(0 0 42px rgba(190, 46, 53, 0.28));
+  filter: drop-shadow(0 0 calc(var(--logo-glow-r) * 0.34px)
+                      rgba(190, 46, 53, calc(var(--logo-glow-s) * 1.5)))
+          drop-shadow(0 0 calc(var(--logo-glow-r) * 1px)
+                      rgba(190, 46, 53, var(--logo-glow-s)))
+          drop-shadow(0 0 calc(var(--logo-glow-r) * 2.4px)
+                      rgba(190, 46, 53, calc(var(--logo-glow-s) * 0.52)));
 }
 .part-card { border: 1px solid var(--border-color-primary); border-radius: 10px;
              padding: 8px 12px; margin-bottom: 8px; height: 100%; }
@@ -177,6 +256,27 @@ def accent_hue() -> gr.themes.Color:
     )
 
 
+def app_theme() -> gr.themes.Base:
+    """The dark theme, deliberately darker and neutral rather than the blue-grey
+    Gradio ships. `zinc` drops most of slate's blue cast; the explicit fills go
+    darker still and carry a touch of warmth (red channel a shade above blue),
+    so the page sits under the accent red and the nest browns instead of
+    fighting them."""
+    return gr.themes.Default(
+        primary_hue=accent_hue(), neutral_hue="zinc"
+    ).set(
+        body_background_fill_dark="#111010",
+        background_fill_primary_dark="#191817",
+        background_fill_secondary_dark="#201f1d",
+        block_background_fill_dark="#191817",
+        panel_background_fill_dark="#1b1a19",
+        input_background_fill_dark="#201f1d",
+        block_label_background_fill_dark="#201f1d",
+        border_color_primary_dark="#2f2d2b",
+        block_border_color_dark="#2f2d2b",
+    )
+
+
 # --- option legends ----------------------------------------------------------
 
 def _wood_svg(
@@ -229,15 +329,15 @@ GRAIN_RULE_HTML = (
     '<div class="legend-row" style="display:flex;gap:18px;margin:2px 0 6px;flex-wrap:wrap;justify-content:center">'
     + _legend_entry(
         _wood_svg(112, 58, inner=_PART_H),
-        "<b>parallel</b> &mdash; the part's grain runs with the sheet grain (strongest)",
+        "<b>Parallel</b> &nbsp; the part's grain runs with the sheet grain (strongest)",
     )
     + _legend_entry(
         _wood_svg(112, 58, inner=_PART_V),
-        "<b>perpendicular</b> &mdash; the part sits across the sheet grain",
+        "<b>Perpendicular</b> &nbsp; the part sits across the sheet grain",
     )
     + _legend_entry(
         _wood_svg(112, 58, inner=_PART_R),
-        "<b>free</b> &mdash; grain does not matter, the part may only be turned "
+        "<b>Free</b> &nbsp; grain does not matter, the part may only be turned "
         "in right-angle (90&#176;) steps",
     )
     + "</div>"
@@ -251,7 +351,7 @@ LABEL_STYLE_HTML = (
             inner='<text x="75" y="27" text-anchor="middle" font-size="15" '
             'font-weight="bold" font-family="sans-serif" fill="#1a1a1a">RU_Airborne</text>',
         ),
-        "<b>raster</b> &mdash; solid filled letters",
+        "<b>Raster</b> &nbsp; solid filled letters",
     )
     + _legend_entry(
         _wood_svg(
@@ -260,7 +360,7 @@ LABEL_STYLE_HTML = (
             'font-weight="bold" font-family="sans-serif" fill="none" '
             'stroke="#1d4ed8" stroke-width="0.8">RU_Airborne</text>',
         ),
-        "<b>outline</b> &mdash; traced letter outlines",
+        "<b>Outline</b> &nbsp; traced letter outlines",
     )
     + "</div>"
 )
@@ -312,10 +412,150 @@ KERF_RULE_HTML = (
     )
     + _legend_entry(
         _wood_svg(150, 68, grain=False, inner=_KERF_ON),
-        "<b>on</b> &nbsp; the beam runs half a kerf outside the line, so the "
+        "<b>On</b> &nbsp; the beam runs half a kerf outside the line, so the "
         "part matches the drawing exactly",
     )
     + "</div>"
+)
+
+_FACE_A = (
+    "M 16,44 C 22,30 38,24 62,26 C 100,29 130,34 152,38 "
+    "C 128,43.6 70,50 40,49 C 26,48.5 15,47 16,44 Z"
+)
+_FACE_B = (
+    "M 17.8,43.85 C 23.8,31.4 38.4,25.6 62,27.4 C 99.6,30.6 128.6,34.9 152,38 "
+    "C 129,44.4 70,46 40.4,47.7 C 27.4,47.1 17.1,46.3 17.8,43.85 Z"
+)
+# The trailing-edge window its two panels are cropped to (x y w h).
+_TE_VIEW = "121 30.3 38 15.7"
+
+# The other shape doubling takes, on a corner: each straight edge is drawn
+# twice and a short line runs across between the two corner points. Material
+# lies below and left of the edges, so face A is the outer copy of both.
+_CORNER_A = "M -10,9 L 44,9 L 56,45 L -10,45 Z"
+_CORNER_B = "M -10,15 L 37,15 L 49,51 L -10,51 Z"
+_CORNER_JOIN = "M 37,15 L 44,9"
+_CORNER_VIEW = "0 3 70 28.9"
+
+_FACE_A_COLOR = "#c0392b"
+_FACE_B_COLOR = "#1f6feb"
+_JOIN_COLOR = "#2f3540"
+
+# Every panel is drawn at the width _legend_entry allows, so the row centres
+# and keeps its gap instead of overflowing.
+_PANEL_W, _PANEL_H = 150, 62
+
+
+def _stroke(d: str, color: str, width: float) -> str:
+    return (
+        f'<path d="{d}" fill="none" stroke="{color}" stroke-width="{width}" '
+        f'stroke-linejoin="round"/>'
+    )
+
+
+def _outer_envelope_d(*d_strings: str) -> str:
+    """The contour a weld keeps: whichever of the given contours is outermost at
+    each point, i.e. the exterior of their union.
+
+    Derived from the same paths the first panel draws, rather than drawn by
+    hand, so the legend cannot promise a result the importer would not produce."""
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    from svgpathtools import parse_path
+
+    polys = []
+    for d in d_strings:
+        # Per closed subpath: sampling a whole multi-subpath d would bridge the
+        # jump between them and fuse two separate contours into one blob.
+        for sub in parse_path(d).continuous_subpaths():
+            pts = [
+                (z.real, z.imag)
+                for z in (sub.point(i / 300.0) for i in range(301))
+            ]
+            poly = Polygon(pts).buffer(0)
+            if not poly.is_empty:
+                polys.append(poly)
+    merged = unary_union(polys)
+    geoms = list(merged.geoms) if merged.geom_type == "MultiPolygon" else [merged]
+    return " ".join(
+        "M "
+        + " L ".join(f"{x:.2f},{y:.2f}" for x, y in g.simplify(0.08).exterior.coords)
+        + " Z"
+        for g in geoms
+    )
+
+
+def _detail_svg(w: int, h: int, view: str, inner: str) -> str:
+    """A wood chip cropped to `view` (an SVG viewBox), for magnified details.
+
+    The corner radius and border are given in view units scaled to the panel's
+    pixel size, so the chip is drawn with the same 5px radius and 1px edge as
+    the sheet thumbnails in the other legends however far the view is zoomed."""
+    vx, vy, vw, vh = (float(v) for v in view.split())
+    per_px = vw / float(w)
+    _detail_svg.count = getattr(_detail_svg, "count", 0) + 1
+    clip = f"weld-chip-{_detail_svg.count}"
+    chip = (
+        f'x="{vx + per_px:.4g}" y="{vy + per_px:.4g}" '
+        f'width="{vw - 2 * per_px:.4g}" height="{vh - 2 * per_px:.4g}" '
+        f'rx="{5 * per_px:.4g}"'
+    )
+    return (
+        f'<svg width="{w}" height="{h}" viewBox="{view}" '
+        f'style="display:block;margin:0 auto">'
+        f'<defs><clipPath id="{clip}"><rect {chip}/></clipPath></defs>'
+        f'<rect {chip} fill="#c9a06c" stroke="#8a6a3f" '
+        f'stroke-width="{per_px:.4g}"/>'
+        # Contours run off the edge of the crop, so they are clipped to the
+        # chip instead of poking past its rounded corners.
+        f'<g clip-path="url(#{clip})">{inner}</g>'
+        "</svg>"
+    )
+
+
+_TE_TWO_LINES = (
+    _stroke(_FACE_A, _FACE_A_COLOR, 0.34) + _stroke(_FACE_B, _FACE_B_COLOR, 0.34)
+)
+_TE_ONE_LINE = _stroke(_outer_envelope_d(_FACE_A, _FACE_B), _FACE_A_COLOR, 0.34)
+_CORNER_TWO_LINES = (
+    _stroke(_CORNER_A, _FACE_A_COLOR, 0.62)
+    + _stroke(_CORNER_B, _FACE_B_COLOR, 0.62)
+    + _stroke(_CORNER_JOIN, _JOIN_COLOR, 0.62)
+)
+_CORNER_ONE_LINE = _stroke(
+    _outer_envelope_d(_CORNER_A, _CORNER_B), _FACE_A_COLOR, 0.62
+)
+
+
+def _weld_row(left: str, left_cap: str, right: str, right_cap: str) -> str:
+    return (
+        '<div class="legend-row" style="display:flex;gap:22px;margin:2px 0 4px;'
+        'flex-wrap:wrap;justify-content:center">'
+        + _legend_entry(left, left_cap)
+        + _legend_entry(right, right_cap)
+        + "</div>"
+    )
+
+
+WELD_RULE_HTML = _weld_row(
+    _detail_svg(_PANEL_W, _PANEL_H, _TE_VIEW, _TE_TWO_LINES),
+    "<b>Before repair (as exported)</b> &nbsp; typically caused by a tapered part, the part's "
+    "two faces are represented by two closely spaced contours. These contours "
+    "converge where the taper ends and may cross along the way, so neither "
+    "contour can be consistently identified as the inner one.",
+    _detail_svg(_PANEL_W, _PANEL_H, _TE_VIEW, _TE_ONE_LINE),
+    "<b>Welded</b> &nbsp; contours within this tolerance are merged into a "
+    "single cut line, following the outermost edge of the two. The laser then "
+    "cuts the edge only once.",
+) + _weld_row(
+    _detail_svg(_PANEL_W, _PANEL_H, _CORNER_VIEW, _CORNER_TWO_LINES),
+    "<b>Before repair (as exported)</b> &nbsp; the same doubling can occur at a corner. Both "
+    "straight edges are drawn twice, with a short line connecting the two "
+    "corner points.",
+    _detail_svg(_PANEL_W, _PANEL_H, _CORNER_VIEW, _CORNER_ONE_LINE),
+    "<b>Welded</b> &nbsp; the duplicate edges are merged into a single corner "
+    "following the outermost edges, while the short connecting line is "
+    "absorbed during the repair.",
 )
 
 OR_DIVIDER_HTML = (

@@ -99,6 +99,7 @@ def run_nest(
     allow_partial: bool,
     grid_step: float,
     sample_step: float,
+    weld: float,
     seed: float,
     label_parts: bool,
     export_unlabeled: bool,
@@ -140,7 +141,7 @@ def run_nest(
         if outline:
             if outline.get("kind") == "file":
                 boundary, sheet_w, sheet_h = load_sheet_boundary(
-                    Path(outline["path"]), float(sample_step)
+                    Path(outline["path"]), float(sample_step), weld_in=float(weld)
                 )
             else:
                 from shapely import wkt as shp_wkt
@@ -235,7 +236,7 @@ def run_nest(
         )
         loaded = []
         for req in requests:
-            part = load_part(req, float(sample_step))
+            part = load_part(req, float(sample_step), float(weld))
             loaded.append(part)
             for note in part.notes:
                 messages.append(f"NOTE ({part.display_name}): {note}")

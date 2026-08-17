@@ -13,7 +13,8 @@
     "min_hole_area": 0.02
   },
   "sample_step": 0.015,
-  "seed": 42,
+  "weld_distance": 0.02,
+  "seed": 67,
   "cut_color": "#ff0000",
   "cut_stroke": "hairline",
   "kerf_in": 0.0,

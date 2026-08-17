@@ -4,7 +4,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from core import load_defaults, output_options_from_config
+from core import DEFAULT_WELD_IN, load_defaults, output_options_from_config
 
 from .assets import (
     GRAIN_RULE_HTML,
@@ -12,7 +12,9 @@ from .assets import (
     LABEL_STYLE_HTML,
     OR_DIVIDER_HTML,
     SHEET_GRAIN_HTML,
+    WELD_RULE_HTML,
     font_preview_html,
+    footer_html,
     logo_header_html,
 )
 from .fonts import font_choices
@@ -167,6 +169,38 @@ def build_ui() -> gr.Blocks:
                         info="The minimum gap kept between neighbouring parts.",
                     )
 
+                with gr.Accordion("Output settings", open=True):
+                    with gr.Group():
+                        label_parts_cb = gr.Checkbox(
+                            value=d_opts.label_parts,
+                            label="Engrave each part's name on it",
+                            info="Engraves each part's file name onto the part so "
+                            "the cut pieces are easy to identify.",
+                        )
+                        export_unlabeled_cb = gr.Checkbox(
+                            value=True,
+                            visible=d_opts.label_parts,
+                            label="Also download a cuts-only version (no engraving)",
+                            info="Alongside the normal file, adds a second SVG per "
+                            "sheet containing just the cut lines. Use it when a "
+                            "part needs to be cut again, so the laser skips the "
+                            "slow engraving pass.",
+                        )
+                    export_scrap_cb = gr.Checkbox(
+                        value=True,
+                        label="Export the leftover material of each sheet",
+                        info="Adds one SVG per sheet tracing the unused "
+                        "material. Upload it later as the custom sheet shape "
+                        "to nest new parts onto the offcut.",
+                    )
+                    debug_overlay = gr.Checkbox(
+                        value=False,
+                        label="Include the debug overlay in the downloaded file",
+                        info="Adds the same reference overlay as the preview toggle "
+                        "to the downloaded SVG, on its own layer. Delete that layer "
+                        "before actually cutting.",
+                    )
+
             with gr.Column():
                 with gr.Accordion("Nesting algorithm settings", open=True):
                     optimizer = gr.Radio(
@@ -221,45 +255,16 @@ def build_ui() -> gr.Blocks:
                         seed = gr.Number(
                             value=int(defaults.get("seed", 42)),
                             label="Random seed", precision=0,
-                            info="Change to explore different random layouts; the "
+                            info="Change to explore different random layouts. The "
                             "same seed always gives the same result.",
                         )
 
             with gr.Column():
-                with gr.Accordion("Output & laser settings", open=True):
-                    with gr.Group():
-                        label_parts_cb = gr.Checkbox(
-                            value=d_opts.label_parts,
-                            label="Engrave each part's name on it",
-                            info="Engraves each part's file name onto the part so "
-                            "the cut pieces are easy to identify.",
-                        )
-                        export_unlabeled_cb = gr.Checkbox(
-                            value=True,
-                            visible=d_opts.label_parts,
-                            label="Also download a cuts-only version (no engraving)",
-                            info="Alongside the normal file, adds a second SVG per "
-                            "sheet containing just the cut lines. Use it when a "
-                            "part needs to be cut again, so the laser skips the "
-                            "slow engraving pass.",
-                        )
-                    export_scrap_cb = gr.Checkbox(
-                        value=True,
-                        label="Export the leftover material of each sheet",
-                        info="Adds one SVG per sheet tracing the unused "
-                        "material. Upload it later as the custom sheet shape "
-                        "to nest new parts onto the offcut.",
-                    )
-                    debug_overlay = gr.Checkbox(
-                        value=False,
-                        label="Include the debug overlay in the downloaded file",
-                        info="Adds the same reference overlay as the preview toggle "
-                        "to the downloaded SVG, on its own layer. Delete that layer "
-                        "before actually cutting.",
-                    )
+                with gr.Accordion("Laser settings", open=True):
                     with gr.Group():
                         label_mode = gr.Radio(
-                            ["raster", "outline"], value=d_opts.label_mode,
+                            [("Raster", "raster"), ("Outline", "outline")],
+                            value=d_opts.label_mode,
                             label="Label engraving style",
                             info="How the part names are engraved.",
                         )
@@ -324,6 +329,17 @@ def build_ui() -> gr.Blocks:
                         show_progress="hidden",
                     )
                     with gr.Group():
+                        weld = gr.Slider(
+                            0.0, 0.06,
+                            value=float(defaults.get("weld_distance", DEFAULT_WELD_IN)),
+                            step=0.005, label="Duplicate line welding tolerance (in)",
+                            info="Merges nearby duplicate contour lines into a single cut. "
+                                "This fixes tapered part exports that contain one outline per face, "
+                                "which can otherwise create duplicate hairline contours and inverted holes. "
+                                "Set to 0 to disable this repair.",
+                        )
+                        gr.HTML(WELD_RULE_HTML, padding=False)
+                    with gr.Group():
                         kerf = gr.Slider(
                             0.0, 0.03, value=0.0, step=0.001,
                             label="Kerf compensation (in)",
@@ -333,6 +349,7 @@ def build_ui() -> gr.Blocks:
                             "exactly on the drawn lines.",
                         )
                         gr.HTML(KERF_RULE_HTML, padding=False)
+
 
         # Floating drawing window: its contents are rendered on demand, so the
         # canvas always mounts while visible (a canvas created inside a hidden
@@ -496,7 +513,11 @@ def build_ui() -> gr.Blocks:
                                         )
                                         with gr.Row():
                                             grain = gr.Radio(
-                                                ["parallel", "perpendicular", "free"],
+                                                [
+                                                    ("Parallel", "parallel"),
+                                                    ("Perpendicular", "perpendicular"),
+                                                    ("Free", "free"),
+                                                ],
                                                 value=p["grain"],
                                                 label="Grain alignment",
                                                 interactive=True,
@@ -576,7 +597,7 @@ def build_ui() -> gr.Blocks:
                 parts_state, outline_state,
                 sheet_w, sheet_h, grain_axis, margin, spacing, max_sheets,
                 optimizer, passes, allow_mirror, allow_holes, allow_partial,
-                grid_step, sample_step, seed,
+                grid_step, sample_step, weld, seed,
                 label_parts_cb, export_unlabeled_cb, export_scrap_cb,
                 label_mode, label_font_dd, label_color, outline_color, cut_color,
                 cut_stroke_mode, stroke_px, stroke_in, kerf,
@@ -593,7 +614,7 @@ def build_ui() -> gr.Blocks:
                 sheet_w, sheet_h, grain_axis, margin, spacing, max_sheets,
                 outline_state, outline_html, outline_file, result_html,
                 optimizer, passes, allow_mirror, allow_holes, allow_partial,
-                grid_step, sample_step, seed,
+                grid_step, sample_step, weld, seed,
                 label_parts_cb, export_unlabeled_cb, export_scrap_cb,
                 label_mode, label_font_dd, label_color, outline_color, cut_color,
                 cut_stroke_mode, stroke_px, stroke_in, kerf,
@@ -647,7 +668,7 @@ def build_ui() -> gr.Blocks:
                 parts_state,
                 sheet_w, sheet_h, grain_axis, margin, spacing, max_sheets,
                 outline_state, optimizer, passes, allow_mirror, allow_holes, allow_partial,
-                grid_step, sample_step, seed,
+                grid_step, sample_step, weld, seed,
                 label_parts_cb, export_unlabeled_cb, export_scrap_cb,
                 label_mode, label_font_dd, label_color, outline_color,
                 cut_color, cut_stroke_mode, stroke_px, stroke_in, kerf,
@@ -708,5 +729,7 @@ def build_ui() -> gr.Blocks:
             pick_viz, [viz_state, viz_debug, stop_state], result_html,
             show_progress="hidden",
         )
+
+        gr.HTML(footer_html(), padding=False)
 
     return demo

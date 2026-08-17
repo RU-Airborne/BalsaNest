@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 
 PX_PER_INCH = 96.0
 EPS = 1e-8
+DEFAULT_WELD_IN = 0.02
 
 SVG_NS = "http://www.w3.org/2000/svg"
 INKSCAPE_NS = "http://www.inkscape.org/namespaces/inkscape"

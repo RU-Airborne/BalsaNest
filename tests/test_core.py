@@ -1,3 +1,5 @@
+import math
+import re
 import sys
 from pathlib import Path
 
@@ -467,6 +469,111 @@ def test_distinct_islands_are_kept_with_note(tmp_path):
     part = bn.load_part(bn.PartRequest(svg, 1, grain="free"), 0.02)
     assert part.base_width_in == pytest.approx(6.5, abs=0.05)  # kept as drawn
     assert part.notes and "differ" in part.notes[0]
+
+
+def _doubled_taper_svg(tmp_path, name="doubled.svg"):
+    """A 4x1 in part with a 0.5 in hole, every contour drawn twice a few
+    thousandths of an inch apart -- what a 3D export of a tapered rib looks
+    like, where the two faces of the part have slightly different profiles."""
+    svg = tmp_path / name
+    svg.write_text(
+        '<?xml version="1.0"?>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="4in" height="1in" viewBox="0 0 384 96">\n'
+        '  <rect x="0" y="0" width="384" height="96" fill="none" stroke="red"/>\n'
+        '  <rect x="0.4" y="0.4" width="383.2" height="95.2" fill="none" stroke="red"/>\n'
+        '  <circle cx="192" cy="48" r="24" fill="none" stroke="red"/>\n'
+        '  <circle cx="192" cy="48" r="23.5" fill="none" stroke="red"/>\n'
+        "</svg>\n"
+    )
+    return svg
+
+
+def test_doubled_contours_are_welded_into_one_part(tmp_path):
+    # Read literally, the outer pair is a contour with another contour just
+    # inside it: a hairline ring enclosing a "hole" the size of the whole part,
+    # with every real cut-out inverted. The weld must recover solid material.
+    part = bn.load_part(bn.PartRequest(_doubled_taper_svg(tmp_path), 1), 0.02)
+
+    hole_area = math.pi * 0.25 ** 2
+    assert part.geometry.area == pytest.approx(4.0 - hole_area, abs=0.02)
+    assert part.base_width_in == pytest.approx(4.0, abs=0.01)
+    holes = list(bn.iter_hole_polygons(part.geometry))
+    assert len(holes) == 1
+    assert holes[0].area == pytest.approx(hole_area, abs=0.01)
+    assert part.notes and "drawn twice" in part.notes[0]
+    # The note reports how far apart the welded pair actually ran, so the user
+    # can judge whether it moved anything that matters. Never more than the
+    # weld distance: strokes that stray further are kept, not fused.
+    gap = float(re.search(r"up to ([\d.]+) in apart", part.notes[0]).group(1))
+    assert 0.003 <= gap <= 0.02
+    # The cut paths are rebuilt from the weld, so the laser cuts the outline and
+    # the hole once each instead of tracing all four drawn contours.
+    assert len(part.paths) == 2
+
+
+def test_weld_can_be_turned_off_per_part(tmp_path):
+    svg = _doubled_taper_svg(tmp_path)
+    part = bn.load_part(bn.PartRequest(svg, 1, weld_distance=0.0), 0.02)
+    assert not any("drawn twice" in n for n in part.notes)
+    # Untouched, the doubled outline is read as a hairline ring: nearly no
+    # material, and the part's own body registers as a cut-out.
+    assert part.geometry.area < 0.5
+    assert bn.load_part(bn.PartRequest(svg, 1), 0.02, 0.0).geometry.area < 0.5
+
+
+def test_doubled_and_multi_view_export_collapses_both_ways(tmp_path):
+    # A tapered part exported doubled AND drawn twice on the page: the weld has
+    # to hand the multi-view dedupe rebuilt paths it can still measure.
+    svg = tmp_path / "doubled_twoview.svg"
+    copies = "".join(
+        f'  <rect x="{dx}" y="0" width="384" height="96" fill="none" stroke="red"/>\n'
+        f'  <rect x="{dx + 0.4}" y="0.4" width="383.2" height="95.2" fill="none" stroke="red"/>\n'
+        for dx in (0, 576)
+    )
+    svg.write_text(
+        '<?xml version="1.0"?>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="10in" height="1in" viewBox="0 0 960 96">\n'
+        + copies
+        + "</svg>\n"
+    )
+    part = bn.load_part(bn.PartRequest(svg, 1), 0.02)
+    assert part.base_width_in == pytest.approx(4.0, abs=0.02)  # one copy, not 10 in
+    assert part.geometry.area == pytest.approx(4.0, abs=0.05)
+    assert any("drawn twice" in n for n in part.notes)
+    assert any("identical disconnected copies" in n for n in part.notes)
+
+
+def test_healthy_export_is_left_alone(tmp_path):
+    svg = tmp_path / "single.svg"
+    svg.write_text(
+        '<?xml version="1.0"?>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="4in" height="1in" viewBox="0 0 384 96">\n'
+        '  <rect x="0" y="0" width="384" height="96" fill="none" stroke="red"/>\n'
+        '  <circle cx="192" cy="48" r="24" fill="none" stroke="red"/>\n'
+        "</svg>\n"
+    )
+    part = bn.load_part(bn.PartRequest(svg, 1), 0.02)
+    assert not part.notes
+    assert part.geometry.area == pytest.approx(4.0 - math.pi * 0.25 ** 2, abs=0.02)
+    assert len(part.paths) == 2  # the drawn paths, not a rebuild
+
+
+def test_weld_keeps_features_it_cannot_tell_apart_out_of_it(tmp_path):
+    # A part drawn once, with a genuine 0.1 in wide slot: far wider than the
+    # weld distance, so nothing is duplicated and the slot survives.
+    svg = tmp_path / "slot.svg"
+    svg.write_text(
+        '<?xml version="1.0"?>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="4in" height="1in" viewBox="0 0 384 96">\n'
+        '  <rect x="0" y="0" width="384" height="96" fill="none" stroke="red"/>\n'
+        '  <rect x="100" y="20" width="9.6" height="56" fill="none" stroke="red"/>\n'
+        "</svg>\n"
+    )
+    part = bn.load_part(bn.PartRequest(svg, 1), 0.02)
+    holes = list(bn.iter_hole_polygons(part.geometry))
+    assert not part.notes
+    assert len(holes) == 1
+    assert holes[0].area == pytest.approx(0.1 * 0.5833, abs=0.01)
 
 
 def test_concave_parts_interlock_like_tetris():

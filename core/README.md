@@ -14,8 +14,11 @@ core/                          # the nesting library, one module per concern
   errors.py                    #   BalsaNestError
   constants.py                 #   units, namespaces, tunables
   models.py                    #   dataclasses: SheetSpec, Variant, Placement, ...
-  svg_geometry.py              #   SVG<->shapely math, mirroring, transforms
-  importer.py                  #   Svg/Dxf/Pdf importers + load_sheet_boundary
+  svg_geometry.py              #   SVG<->shapely math, mirroring, transforms,
+                               #   contour stitching + duplicate-line weld
+  importer.py                  #   Svg/Dxf/Pdf importers, CAD-export repair
+                               #   (doubled contours, multi-view, watermarks),
+                               #   load_sheet_boundary
   variants.py                  #   grain rules -> orientation set
   holes.py                     #   scrap cut-out detection + nesting
   nfp.py                       #   no-fit-polygon exact-contact candidates
@@ -126,6 +129,14 @@ or drive the same pipeline functions directly.
 - **stitches segment-soup outlines**: SolidWorks/Inkscape exports that draw one
   outline as dozens of disconnected segments are chained back into closed
   contours, so hole detection, labels and collision stay correct;
+- **welds doubled contours** (`weld_distance`, default `0.02` in): a tapered
+  part exported from its 3D body carries the outline of both of its faces a few
+  thousandths of an inch apart, so every contour — outline and each lightening
+  hole — is drawn twice, which the even-odd rule reads as a hairline ring
+  enclosing a hole the size of the part, with every cut-out inverted. Drawings
+  measured as genuinely doubled are rebuilt with everything closer than the
+  weld distance treated as one cut line, and their cut paths are replaced by
+  the welded contours so nothing is cut twice;
 - **minimises the used footprint** so the rest of the sheet stays as one large
   usable off-cut;
 - enforces edge margin and minimum part-to-part spacing;
@@ -280,6 +291,7 @@ Example:
     "min_hole_area": 0.02
   },
   "sample_step": 0.015,
+  "weld_distance": 0.02,
   "seed": 42,
   "output": "wing_ribs_laser.svg",
   "labels": { "enabled": true, "min_font_in": 0.06, "max_font_in": 0.5, "align_bands": true },
@@ -309,6 +321,38 @@ Example:
 | `allow_nesting_in_holes` | `true` | Allow small parts to be placed inside larger parts' scrap cut-outs. |
 | `min_hole_area` | `0.02` | in²; ignore cut-outs smaller than this when hole-nesting. |
 | `outline_file` | – | Optional non-rectangular stock: an SVG/DXF/PDF drawing whose largest closed contour becomes the sheet shape (interior contours mark blocked holes/defects). The file's page size overrides `width`/`height` and the shape keeps its drawn position on the page; DXF has no page, so the shape's bounding box is used instead. In the web UI you can also upload this file or paint the shape directly on a canvas. |
+
+### Doubled-contour repair (`weld_distance`)
+
+| key | default | meaning |
+| --- | --- | --- |
+| `weld_distance` | `0.02` | in; drawn lines closer together than this are the same cut. Set per part (`"weld_distance"` inside a `parts` entry) to override the job value for one file. `0` disables the repair. |
+
+Exporting a **tapered** part from its 3D body — a wing or stabiliser rib whose
+two faces have different profiles — draws both face outlines, typically a few
+thousandths of an inch apart. Every contour is then doubled, and the even-odd
+rule reads each pair as a contour with another just inside it: a hairline ring
+of material enclosing a hole the size of the whole part, with every real
+cut-out inverted. Nesting happily fills the "hole" that is actually solid balsa.
+
+When more than 10% of a drawing's length merely retraces other lines, the part
+is rebuilt from its raw strokes with everything closer than `weld_distance`
+welded into one cut line, and its cut paths are replaced by the welded contours
+so the laser stops cutting each line twice. Drawings that are not doubled
+measure a couple of percent at most and are left untouched, byte for byte. The
+default is about a laser kerf in balsa, so two lines that close together could
+not have been cut as separate features anyway; raise it if a part's faces are
+further apart than that.
+
+**Which contour survives**: the weld keeps the **outer** of each pair — the
+part comes out at its larger face and its cut-outs at their larger size. The
+two face profiles are not cleanly nested (they meet exactly where the taper
+runs out, so neither is the inner one all the way round), and the difference is
+bounded by `weld_distance` by construction: strokes further apart than that are
+never fused, and a drawing whose copies all sit beyond it is not repaired at
+all. The note reports the widest gap actually welded (`welded lines up to
+0.0129 in apart`), so it is visible whether the repair moved a line by a
+thousandth of an inch or by something worth a second look.
 
 ### Machine defaults file
 
@@ -340,6 +384,8 @@ delete nothing.
 --no-hole-nesting    disable nesting parts inside scrap cut-outs
 --max-sheets N       cap the number of stock sheets
 --allow-partial      write whatever fits instead of erroring on an over-full job
+--weld INCHES        distance across which drawn lines count as the same cut
+                     (doubled-contour repair; default 0.02, 0 disables)
 ```
 
 ## Behaviours worth knowing

@@ -9,7 +9,14 @@ from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence
 
 from shapely import make_valid
-from shapely.geometry import GeometryCollection, LineString, MultiPolygon, Polygon
+from shapely.geometry import (
+    GeometryCollection,
+    LineString,
+    MultiLineString,
+    MultiPolygon,
+    Point,
+    Polygon,
+)
 from shapely.ops import unary_union
 
 from .constants import EPS, LENGTH_RE, PX_PER_INCH, UNIT_TO_INCH
@@ -220,6 +227,140 @@ def polygonal_only(geom: Any) -> Any:
         ]
         return unary_union(polys) if polys else GeometryCollection()
     return GeometryCollection()
+
+
+def sampled_polylines(
+    paths: Sequence[Any],
+    viewbox_min_x: float,
+    viewbox_min_y: float,
+    units_to_inch: float,
+    sample_step_in: float,
+) -> list[list[tuple[float, float]]]:
+    """Every continuous subpath of every path, flattened to points in inches.
+    """
+    lines: list[list[tuple[float, float]]] = []
+    for path in paths:
+        try:
+            subpaths = path.continuous_subpaths()
+        except Exception:
+            subpaths = [path]
+        for subpath in subpaths:
+            if len(subpath) == 0:
+                continue
+            pts = sample_subpath_points(
+                subpath, viewbox_min_x, viewbox_min_y, units_to_inch, sample_step_in
+            )
+            if len(pts) >= 2:
+                lines.append(pts)
+    return lines
+
+
+def duplicated_line_stats(
+    polylines: Sequence[Sequence[tuple[float, float]]], weld_in: float
+) -> tuple[float, float]:
+    """How much of the drawn length merely retraces other drawn length, and how
+    far apart the widest such pair runs. Returns (fraction, max_gap_inches).
+    """
+    lines = [LineString(p) for p in polylines if len(p) >= 2]
+    total = sum(line.length for line in lines)
+    if total <= 0:
+        return 0.0, 0.0
+
+    # A stroke may poke a little way out of the cover without being genuine
+    # geometry -- the two copies splay apart at the ends of the taper.
+    slack = 2.0 * weld_in
+    duplicated = 0.0
+    max_gap = 0.0
+    kept: list[Any] = []
+    cover: Any = None
+    for line in sorted(lines, key=lambda g: g.length, reverse=True):
+        if cover is not None and line.difference(cover).length <= slack:
+            duplicated += line.length
+            kept_geom = MultiLineString(kept) if len(kept) > 1 else kept[0]
+            fused = [
+                d
+                for d in (kept_geom.distance(Point(c)) for c in line.coords)
+                if d <= weld_in
+            ]
+            if fused:
+                max_gap = max(max_gap, max(fused))
+            continue
+        kept.append(line)
+        buffered = line.buffer(weld_in)
+        cover = buffered if cover is None else cover.union(buffered)
+    return duplicated / total, max_gap
+
+
+def weld_polylines_to_geometry(
+    polylines: Sequence[Sequence[tuple[float, float]]], weld_in: float
+) -> Any:
+    """Rebuild part geometry from raw strokes, welding everything closer
+    together than ``weld_in`` into a single cut line.
+    """
+    lines = [LineString(p) for p in polylines if len(p) >= 2]
+    if not lines:
+        return GeometryCollection()
+
+    radius = weld_in / 2.0
+    band = unary_union(lines).buffer(radius, join_style="mitre", mitre_limit=5.0)
+    components = (
+        [band] if isinstance(band, Polygon) else list(getattr(band, "geoms", []))
+    )
+
+    regions: list[Any] = []
+    for component in components:
+        if not isinstance(component, Polygon) or component.is_empty:
+            continue
+        region = Polygon(component.exterior).buffer(
+            -radius, join_style="mitre", mitre_limit=5.0
+        )
+        region = polygonal_only(region)
+        if not region.is_empty and region.area > EPS:
+            regions.append(region)
+
+    occupied: Any = GeometryCollection()
+    for region in sorted(regions, key=lambda g: g.area, reverse=True):
+        occupied = region if occupied.is_empty else occupied.symmetric_difference(region)
+        if not occupied.is_valid:
+            occupied = make_valid(occupied)
+    return polygonal_only(occupied)
+
+
+def geometry_to_paths(
+    geometry: Any,
+    viewbox_min_x: float,
+    viewbox_min_y: float,
+    units_to_inch: float,
+) -> list[Any]:
+    """One closed svgpathtools path per ring of a shapely geometry, expressed
+    back in the source drawing's user units.
+
+    Used after a weld, so the cut paths that reach the laser are the same single
+    contours the nester packed -- not the doubled strokes they were rebuilt
+    from."""
+    from svgpathtools import Line, Path as SvgPath
+
+    def to_user(x: float, y: float) -> complex:
+        return complex(x / units_to_inch + viewbox_min_x, y / units_to_inch + viewbox_min_y)
+
+    polys: list[Any] = []
+    if isinstance(geometry, Polygon):
+        polys = [geometry]
+    elif isinstance(geometry, (MultiPolygon, GeometryCollection)):
+        polys = [g for g in geometry.geoms if isinstance(g, Polygon)]
+
+    paths: list[Any] = []
+    for poly in polys:
+        if poly.is_empty:
+            continue
+        for ring in [poly.exterior, *poly.interiors]:
+            points = [to_user(x, y) for x, y in ring.coords]
+            segments = [
+                Line(a, b) for a, b in zip(points, points[1:]) if abs(a - b) > 1e-12
+            ]
+            if segments:
+                paths.append(SvgPath(*segments))
+    return paths
 
 
 def stitch_open_contours(

@@ -8,6 +8,8 @@ from typing import Optional
 
 import gradio as gr
 
+from core import DEFAULT_WELD_IN
+
 from .parts import reload_with_units, sync_parts
 from .previews import boundary_html, empty_sheet_viz
 
@@ -20,7 +22,8 @@ def save_job(
     sheet_w: float, sheet_h: float, grain_axis: str,
     margin: float, spacing: float, max_sheets: float,
     optimizer: str, passes: float, allow_mirror: bool, allow_holes: bool,
-    allow_partial: bool, grid_step: float, sample_step: float, seed: float,
+    allow_partial: bool, grid_step: float, sample_step: float, weld: float,
+    seed: float,
     label_parts: bool, export_unlabeled: bool, export_scrap: bool,
     label_mode: str, label_font: str,
     label_color: str, outline_color: str, cut_color: str,
@@ -77,7 +80,8 @@ def save_job(
             "optimizer": optimizer, "passes": int(passes),
             "allow_mirror": bool(allow_mirror), "allow_holes": bool(allow_holes),
             "allow_partial": bool(allow_partial), "grid_step": float(grid_step),
-            "sample_step": float(sample_step), "seed": int(seed),
+            "sample_step": float(sample_step), "weld_distance": float(weld),
+            "seed": int(seed),
         },
         "output": {
             "label_parts": bool(label_parts),
@@ -178,6 +182,7 @@ def load_job(path: Optional[str]):
         int(nest.get("passes", 5)), bool(nest.get("allow_mirror", True)),
         bool(nest.get("allow_holes", True)), bool(nest.get("allow_partial", False)),
         float(nest.get("grid_step", 0.04)), float(nest.get("sample_step", 0.015)),
+        float(nest.get("weld_distance", DEFAULT_WELD_IN)),
         int(nest.get("seed", 42)),
         bool(out.get("label_parts", True)),
         bool(out.get("export_unlabeled", True)),

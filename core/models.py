@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from .constants import DEFAULT_WELD_IN
 from .errors import BalsaNestError
 
 
@@ -129,9 +130,13 @@ class PartRequest:
     name: Optional[str] = None
     units: Optional[str] = None  # DXF only: "in"/"mm"/"cm" override for unitless files
 
+    weld_distance: Optional[float] = None
+
     def validate(self) -> None:
         if self.quantity < 1:
             raise BalsaNestError(f"{self.file}: quantity must be >= 1.")
+        if self.weld_distance is not None and self.weld_distance < 0:
+            raise BalsaNestError(f"{self.file}: weld_distance must be >= 0.")
         if self.grain not in {"parallel", "perpendicular", "free"}:
             raise BalsaNestError(
                 f"{self.file}: grain must be parallel, perpendicular, or free."
@@ -223,6 +228,7 @@ class JobSpec:
     output: Path
     options: OutputOptions = field(default_factory=OutputOptions)
     allow_partial: bool = False
+    weld_distance: float = DEFAULT_WELD_IN
 
 
 def placement_bounds(placement: Placement) -> tuple[float, float, float, float]:
