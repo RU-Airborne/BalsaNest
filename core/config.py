@@ -119,6 +119,7 @@ def config_to_specs(config: dict[str, Any], config_dir: Path) -> JobSpec:
         allow_mirror=bool(sheet_cfg.get("allow_mirror", True)),
         compact=bool(sheet_cfg.get("compact", True)),
         compress=bool(sheet_cfg.get("compress", True)),
+        objective=str(sheet_cfg.get("objective", "compact")).lower(),
         allow_nesting_in_holes=bool(sheet_cfg.get("allow_nesting_in_holes", True)),
         min_hole_area=float(sheet_cfg.get("min_hole_area", 0.02)),
         boundary=boundary,

@@ -77,6 +77,9 @@ they pack with full rotation freedom.
   (`nest_scrap*.svg`). Upload it as the custom sheet shape next time and new
   parts nest straight onto the offcut, positioned to match the board.
 
+Selecting a custom sheet shape automatically enables this optimization, since preserving a usable section of the board is especially important when a tight nest would otherwise consume the valuable end.
+
+
 <div align="center">
   <img src="docs/scrap_cutout.png" width="400">
   <img src="docs/scrap_cutout_output.png" width="400">
@@ -85,6 +88,14 @@ they pack with full rotation freedom.
 </div>
 
 <br>
+
+- **Nesting that protects the off-cut:** *Tightest layout* packs everything into 
+the smallest possible rectangle. That’s ideal for a full sheet, where the unused 
+stock naturally remains as a single block at the far end. If you want to preserve 
+that remainder for future use, choose *Largest usable off-cut*. It accepts a slightly 
+looser nest in order to keep the largest possible rectangular board from the unused stock. 
+Set *Optimize for* to *Largest usable off-cut*, and BalsaNest will score layouts based 
+on the size of that remaining rectangle rather than how tightly the parts are clustered.
 
 - **Dimensionally exact parts** — kerf compensation: set the width your beam
   burns away and every cut line is offset outward by half of it (part
@@ -209,7 +220,8 @@ anything else. On each card:
   or drawn shape just marks where parts may go, at the exact position you put
   it, so alignment on the laser bed matches. An uploaded file's page size
   becomes the sheet size (a `nest_scrap*.svg` from an earlier run drops
-  straight in).
+  straight in). Setting a shape also switches *Optimize for* to *Largest
+  usable off-cut*.
 - **Grain direction of the sheet** — which way the grain runs on your stock
   (x = along the width, y = along the height).
 - **Maximum number of sheets** — 0 lets BalsaNest add sheets as needed.
@@ -239,6 +251,14 @@ only opened up later.
   part at a time. A squeeze is kept only if every gap still meets your spacing
   and the layout genuinely came out tighter. It cannot make a nest worse
   than the one the optimizer produced. Costs extra time at the end of a run.
+- **Optimize for**: what a good layout means for this job.
+  - *Tightest layout* (default) packs everything into the smallest rectangle.
+    On a full sheet this is what you want, and it leaves the unused stock as
+    one block down the far end anyway.
+  - *Largest usable off-cut* instead keeps the biggest single rectangular
+    board it can, accepting a slightly looser nest to get it. Worth it when
+    you mean to put the remainder back on the shelf.
+
 - **Allow parts to be flipped (mirrored)**: mirror images pack tighter. Turn
   off if parts have a "good" face.
 - **Nest small parts inside cut-outs** — use the waste inside lightening holes.

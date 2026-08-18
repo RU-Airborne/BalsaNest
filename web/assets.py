@@ -554,6 +554,111 @@ WELD_RULE_HTML = _weld_row(
     "absorbed during the repair.",
 )
 
+
+_BOARD = "#2e8b57"
+
+
+def _part(x: float, y: float, w: float, h: float) -> str:
+    return (
+        f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="4" '
+        f'fill="#c0392b" opacity="0.9"/>'
+    )
+
+
+def _board(x: float, y: float, w: float, h: float) -> str:
+    return (
+        f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="4" '
+        f'fill="{_BOARD}" fill-opacity="0.16" stroke="{_BOARD}" '
+        f'stroke-width="1.6" stroke-dasharray="5 3"/>'
+    )
+
+
+def _rounded_path(pts: list[tuple[float, float]], r: float) -> str:
+    """Closed path through pts with every corner rounded to radius r."""
+    import math
+
+    n = len(pts)
+    out = []
+    for i in range(n):
+        px, py = pts[(i - 1) % n]
+        vx, vy = pts[i]
+        nx, ny = pts[(i + 1) % n]
+
+        ix, iy = vx - px, vy - py
+        ox, oy = nx - vx, ny - vy
+        li = math.hypot(ix, iy) or 1.0
+        lo = math.hypot(ox, oy) or 1.0
+        ix, iy = ix / li, iy / li
+        ox, oy = ox / lo, oy / lo
+
+        cut = min(r, li / 2.0, lo / 2.0)
+        ax, ay = vx - ix * cut, vy - iy * cut
+        bx, by = vx + ox * cut, vy + oy * cut
+
+        sweep = 1 if (ix * oy - iy * ox) > 0 else 0
+        out.append(f"{'M' if i == 0 else 'L'} {ax:.2f},{ay:.2f}")
+        out.append(f"A {cut:.2f},{cut:.2f} 0 0 {sweep} {bx:.2f},{by:.2f}")
+    return " ".join(out) + " Z"
+
+
+def _offcut_svg(w: int, h: int, inner: str = "") -> str:
+    """A sheet with a bite already taken out of one end, drawn like _wood_svg."""
+    d = _rounded_path(
+        [(7, 24), (57, 24), (57, 4), (w - 5, 4), (w - 5, h - 4), (7, h - 4)], 5
+    )
+    return (
+        f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" '
+        f'style="display:block;margin:0 auto">'
+        f'<path d="{d}" fill="#c9a06c" stroke="#8a6a3f" stroke-width="1.4" '
+        f'stroke-linejoin="round"/>'
+        f"{inner}</svg>"
+    )
+
+
+_PW, _PH = 19, 11
+
+
+def _grid(x0: float, y0: float, cols: int, rows: int, dx: float, dy: float) -> str:
+    return "".join(
+        _part(x0 + c * dx, y0 + r * dy, _PW, _PH)
+        for r in range(rows) for c in range(cols)
+    )
+
+
+_NEW_TIGHT = _board(81, 8, 62, 52) + _grid(12, 28, 3, 2, 22, 15)
+_NEW_BOARD = _board(8, 8, 135, 33) + _grid(12, 46, 6, 1, 22, 0)
+
+_OFF_TIGHT = _board(78, 8, 65, 52) + _grid(11, 32, 3, 2, 22, 14)
+_OFF_BOARD = _board(61, 8, 82, 52) + _grid(11, 27, 2, 3, 22, 12)
+
+
+OBJECTIVE_RULE_HTML = (
+    '<div class="legend-row" style="display:flex;gap:22px;margin:2px 0 2px;flex-wrap:wrap;justify-content:center">'
+    + _legend_entry(
+        _wood_svg(150, 68, grain=False, inner=_NEW_TIGHT),
+        "<b>Tightest (on a new sheet) </b> &nbsp; parts bunch into the smallest "
+        "block, and the stock left over wraps around it in an L",
+    )
+    + _legend_entry(
+        _wood_svg(150, 68, grain=False, inner=_NEW_BOARD),
+        "<b>Largest off-cut (on a new sheet) </b> &nbsp; the same parts run along "
+        "one edge, leaving the rest as one full-width board",
+    )
+    + "</div>"
+    '<div class="legend-row" style="display:flex;gap:22px;margin:2px 0 6px;flex-wrap:wrap;justify-content:center">'
+    + _legend_entry(
+        _offcut_svg(150, 68, inner=_OFF_TIGHT),
+        "<b>Tightest (on an scrap piece) </b> &nbsp; packing starts at the sheet "
+        "corner and eats into the square end that was worth keeping",
+    )
+    + _legend_entry(
+        _offcut_svg(150, 68, inner=_OFF_BOARD),
+        "<b>Largest off-cut (on an scrap piece)</b> &nbsp; the ragged end is used "
+        "up first and the square end survives intact",
+    )
+    + "</div>"
+)
+
 OR_DIVIDER_HTML = (
     '<div style="display:flex;align-items:center;gap:10px;'
     'margin:4px 0;opacity:.65">'

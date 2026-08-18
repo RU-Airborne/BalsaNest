@@ -22,6 +22,9 @@ class SheetSpec:
     compact: bool = True
     # Run the shrink-and-repair pass after polishing
     compress: bool = True
+    # "compact" packs into the smallest used rectangle. 
+    # "offcut" maximises the biggest rectangular board still left on the sheet.
+    objective: str = "compact"
     allow_nesting_in_holes: bool = True
     min_hole_area: float = 0.02  # in^2, ignore cut-outs smaller than this
     boundary: Optional[Any] = None
@@ -29,6 +32,8 @@ class SheetSpec:
     def validate(self) -> None:
         if self.width <= 0 or self.height <= 0:
             raise BalsaNestError("Sheet width and height must be > 0.")
+        if self.objective not in {"compact", "offcut"}:
+            raise BalsaNestError("sheet.objective must be 'compact' or 'offcut'.")
         if self.grain_axis not in {"x", "y"}:
             raise BalsaNestError("sheet.grain_axis must be 'x' or 'y'.")
         if self.margin < 0 or self.spacing < 0:

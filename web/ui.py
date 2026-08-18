@@ -7,6 +7,7 @@ from core import DEFAULT_WELD_IN, load_defaults, output_options_from_config
 from .assets import (
     GRAIN_RULE_HTML,
     KERF_RULE_HTML,
+    OBJECTIVE_RULE_HTML,
     LABEL_STYLE_HTML,
     OR_DIVIDER_HTML,
     SHEET_GRAIN_HTML,
@@ -191,6 +192,12 @@ def build_ui() -> gr.Blocks:
                         "material. Upload it later as the custom sheet shape "
                         "to nest new parts onto the offcut.",
                     )
+                    allow_partial = gr.Checkbox(
+                        value=False,
+                        label="Keep a partial result if not everything fits",
+                        info="If some parts cannot fit, still produce the sheets "
+                        "that do fit instead of stopping with an error.",
+                    )
                     debug_overlay = gr.Checkbox(
                         value=False,
                         label="Include the debug overlay in the downloaded file",
@@ -217,33 +224,47 @@ def build_ui() -> gr.Blocks:
                         info="How many different layouts the heuristic optimizer "
                         "tries before keeping the best one.",
                     )
-                    allow_mirror = gr.Checkbox(
-                        value=bool(d_sheet.get("allow_mirror", True)),
-                        label="Allow parts to be flipped (mirrored)",
-                        info="Lets a part be turned over to its mirror image when "
-                        "that packs tighter. Turn this off if your parts have a "
-                        "front face that must stay up.",
-                    )
-                    allow_holes = gr.Checkbox(
-                        value=bool(d_sheet.get("allow_nesting_in_holes", True)),
-                        label="Nest small parts inside cut-outs",
-                        info="Places small parts inside the scrap area of bigger "
-                        "parts' holes and cut-outs to save material.",
-                    )
-                    compress_cb = gr.Checkbox(
-                        value=bool(d_sheet.get("compress", True)),
-                        label="Squeeze the finished layout",
-                        info="After optimizing, repeatedly pulls the used length "
-                        "in and shuffles the parts to fit, keeping the result "
-                        "only when it comes out tighter and still legal. Costs "
-                        "extra time at the end of a run.",
-                    )
-                    allow_partial = gr.Checkbox(
-                        value=False,
-                        label="Keep a partial result if not everything fits",
-                        info="If some parts cannot fit, still produce the sheets "
-                        "that do fit instead of stopping with an error.",
-                    )
+                    with gr.Group():
+                        allow_mirror = gr.Checkbox(
+                            value=bool(d_sheet.get("allow_mirror", True)),
+                            label="Allow parts to be flipped (mirrored)",
+                            info="Lets a part be turned over to its mirror image "
+                            "when that packs tighter. Turn this off if your parts "
+                            "have a front face that must stay up.",
+                        )
+                        allow_holes = gr.Checkbox(
+                            value=bool(d_sheet.get("allow_nesting_in_holes", True)),
+                            label="Nest small parts inside cut-outs",
+                            info="Places small parts inside the scrap area of "
+                            "bigger parts' holes and cut-outs to save material.",
+                        )
+                        compress_cb = gr.Checkbox(
+                            value=bool(d_sheet.get("compress", True)),
+                            label="Squeeze the finished layout",
+                            info="After optimizing, repeatedly pulls the used "
+                            "length in and shuffles the parts to fit, keeping the "
+                            "result only when it comes out tighter and still "
+                            "legal. Costs extra time at the end of a run.",
+                        )
+                    with gr.Group():
+                        objective_dd = gr.Radio(
+                            ["Tightest layout", "Largest usable off-cut"],
+                            value="Largest usable off-cut"
+                            if str(d_sheet.get("objective", "compact")) == "offcut"
+                            else "Tightest layout",
+                            label="Optimize for",
+                            info="Tightest packs everything into the smallest "
+                            "rectangle. Largest usable off-cut keeps the "
+                            "biggest single rectangular board it can, at the "
+                            "cost of maybe a slightly looser nest. Setting a custom "
+                            "sheet shape switches this to Largest usable "
+                            "off-cut for you, and clearing the shape switches it "
+                            "back, since on odd-shaped stock, the tightest nest "
+                            "usually eats into the good end, and largest off-cuts option"
+                            "would use more scrap area. Override it either "
+                            "way whenever you like.",
+                        )
+                        gr.HTML(OBJECTIVE_RULE_HTML, padding=False)
                     with gr.Accordion("Advanced finetuning", open=False):
                         grid_step = gr.Slider(
                             0.01, 0.25, value=float(d_sheet.get("grid_step", 0.04)),
@@ -285,55 +306,60 @@ def build_ui() -> gr.Blocks:
                         font_preview = gr.HTML(
                             font_preview_html(d_opts.label_font), padding=False
                         )
-                    with gr.Row(equal_height=True):
-                        cut_color = gr.ColorPicker(
-                            value=d_opts.cut_color, label="Cut colour",
-                            min_width=60,
+                    with gr.Group():
+                        with gr.Row(equal_height=True):
+                            cut_color = gr.ColorPicker(
+                                value=d_opts.cut_color, label="Cut colour",
+                                min_width=60,
+                            )
+                            label_color = gr.ColorPicker(
+                                value=d_opts.label_color, label="Raster colour",
+                                min_width=60,
+                            )
+                            outline_color = gr.ColorPicker(
+                                value=d_opts.label_outline_color,
+                                label="Outline colour",
+                                min_width=60,
+                            )
+                        default_hairline = d_opts.cut_stroke == "hairline"
+                        cut_stroke_mode = gr.Radio(
+                            ["Hairline", "Fixed width (px)", "Fixed width (in)"],
+                            value="Hairline" if default_hairline
+                            else "Fixed width (px)",
+                            label="Cut line style",
                         )
-                        label_color = gr.ColorPicker(
-                            value=d_opts.label_color, label="Raster colour",
-                            min_width=60,
+                        stroke_px = gr.Slider(
+                            0.1, 3.0,
+                            value=1.0 if default_hairline
+                            else float(d_opts.cut_stroke),
+                            step=0.1, label="Cut line width (px)",
+                            info="The line width used for the cut lines. Some "
+                            "laser software ignores line width entirely.",
+                            visible=not default_hairline,
                         )
-                        outline_color = gr.ColorPicker(
-                            value=d_opts.label_outline_color,
-                            label="Outline colour",
-                            min_width=60,
+                        stroke_in = gr.Slider(
+                            0.001, 0.05, value=0.005, step=0.001,
+                            label="Cut line width (in)",
+                            info="The line width used for the cut lines, in inches.",
+                            visible=False,
                         )
-                    merge_cuts = gr.Checkbox(
-                        value=d_opts.merge_common_cuts,
-                        label="Merge common cut lines",
-                        info="When two parts touch (set the part spacing to 0), an "
-                        "edge they share is cut once instead of twice, saving "
-                        "cutting time. Only exactly overlapping lines are merged.",
-                    )
-                    default_hairline = d_opts.cut_stroke == "hairline"
-                    cut_stroke_mode = gr.Radio(
-                        ["Hairline", "Fixed width (px)", "Fixed width (in)"],
-                        value="Hairline" if default_hairline else "Fixed width (px)",
-                        label="Cut line style",
-                    )
-                    stroke_px = gr.Slider(
-                        0.1, 3.0,
-                        value=1.0 if default_hairline else float(d_opts.cut_stroke),
-                        step=0.1, label="Cut line width (px)",
-                        info="The line width used for the cut lines. Some laser "
-                        "software ignores line width entirely.",
-                        visible=not default_hairline,
-                    )
-                    stroke_in = gr.Slider(
-                        0.001, 0.05, value=0.005, step=0.001,
-                        label="Cut line width (in)",
-                        info="The line width used for the cut lines, in inches.",
-                        visible=False,
-                    )
-                    cut_stroke_mode.change(
-                        lambda m: (
-                            gr.update(visible=m == "Fixed width (px)"),
-                            gr.update(visible=m == "Fixed width (in)"),
-                        ),
-                        cut_stroke_mode, [stroke_px, stroke_in],
-                        show_progress="hidden",
-                    )
+                        cut_stroke_mode.change(
+                            lambda m: (
+                                gr.update(visible=m == "Fixed width (px)"),
+                                gr.update(visible=m == "Fixed width (in)"),
+                            ),
+                            cut_stroke_mode, [stroke_px, stroke_in],
+                            show_progress="hidden",
+                        )
+                    with gr.Group():
+                        merge_cuts = gr.Checkbox(
+                            value=d_opts.merge_common_cuts,
+                            label="Merge common cut lines",
+                            info="When two parts touch (set the part spacing to "
+                            "0), an edge they share is cut once instead of "
+                            "twice, saving cutting time. Only exactly "
+                            "overlapping lines are merged.",
+                        )
                     with gr.Group():
                         weld = gr.Slider(
                             0.0, 0.06,
@@ -416,7 +442,8 @@ def build_ui() -> gr.Blocks:
                 use_evt = use_btn.click(
                     set_outline_from_drawing,
                     [editor, sheet_w, sheet_h],
-                    [outline_state, outline_html, sheet_w, sheet_h, result_html],
+                    [outline_state, outline_html, sheet_w, sheet_h,
+                     result_html, objective_dd],
                     show_progress="minimal",
                 )
                 # Close the window only after the trace event has fully finished
@@ -604,6 +631,7 @@ def build_ui() -> gr.Blocks:
                 sheet_w, sheet_h, grain_axis, margin, spacing, max_sheets,
                 optimizer, passes, allow_mirror, allow_holes, allow_partial,
                 compress_cb,
+                objective_dd,
                 grid_step, sample_step, weld, seed,
                 label_parts_cb, export_unlabeled_cb, export_scrap_cb,
                 label_mode, label_font_dd, label_color, outline_color, cut_color,
@@ -622,6 +650,7 @@ def build_ui() -> gr.Blocks:
                 outline_state, outline_html, outline_file, result_html,
                 optimizer, passes, allow_mirror, allow_holes, allow_partial,
                 compress_cb,
+                objective_dd,
                 grid_step, sample_step, weld, seed,
                 label_parts_cb, export_unlabeled_cb, export_scrap_cb,
                 label_mode, label_font_dd, label_color, outline_color, cut_color,
@@ -634,7 +663,8 @@ def build_ui() -> gr.Blocks:
         outline_file.change(
             set_outline_from_file,
             [outline_file, sheet_w, sheet_h],
-            [outline_state, outline_html, sheet_w, sheet_h, result_html],
+            [outline_state, outline_html, sheet_w, sheet_h, result_html,
+             objective_dd],
             show_progress="minimal",
         )
         draw_open_btn.click(
@@ -644,9 +674,11 @@ def build_ui() -> gr.Blocks:
             lambda w, h: (
                 None, gr.update(value="", visible=False),
                 gr.update(value=None), empty_sheet_viz(None, w, h),
+                gr.update(value="Tightest layout"),
             ),
             [sheet_w, sheet_h],
-            [outline_state, outline_html, outline_file, result_html],
+            [outline_state, outline_html, outline_file, result_html,
+             objective_dd],
             show_progress="hidden",
         )
 
@@ -677,6 +709,7 @@ def build_ui() -> gr.Blocks:
                 sheet_w, sheet_h, grain_axis, margin, spacing, max_sheets,
                 outline_state, optimizer, passes, allow_mirror, allow_holes, allow_partial,
                 compress_cb,
+                objective_dd,
                 grid_step, sample_step, weld, seed,
                 label_parts_cb, export_unlabeled_cb, export_scrap_cb,
                 label_mode, label_font_dd, label_color, outline_color,

@@ -324,6 +324,8 @@ Example:
 | `allow_mirror` | `true` | Allow mirrored/flipped orientations (grain is preserved). Doubles the useful orientations for asymmetric parts. |
 | `allow_nesting_in_holes` | `true` | Allow small parts to be placed inside larger parts' scrap cut-outs. |
 | `min_hole_area` | `0.02` | in². Cut-outs smaller than this are ignored when hole-nesting. |
+| `objective` | `"compact"` | What a good layout means. `"compact"` minimises the used bounding box. `"offcut"` maximises the largest rectangular board still cuttable from the leftover, at the cost of a looser nest. See below. |
+| `compress` | `true` | Run the shrink-and-repair squeeze after polishing. Can only return the same layout or a tighter one. |
 | `outline_file` | – | Optional non-rectangular stock: an SVG/DXF/PDF drawing whose largest closed contour becomes the sheet shape (interior contours mark blocked holes/defects). The file's page size overrides `width`/`height` and the shape keeps its drawn position on the page. DXF has no page, so the shape's bounding box is used instead. In the web UI you can also upload this file or paint the shape directly on a canvas. |
 
 ### Doubled-contour repair (`weld_distance`)
@@ -534,6 +536,37 @@ polish sweep can tighten an interlock while the cluster as a whole drifts off
 the corner. The pass therefore ends by **snapping each sheet's cluster back to
 the margin corner**: a rigid translation that preserves every gap, applied on
 polygonal sheets only when the moved cluster still fits the usable region.
+
+### Largest off-cut objective
+
+`"objective": "offcut"` swaps the ranking above for a different question: not
+"how small is the used rectangle" but "how big is the board I get back".
+
+They are not the same, and on a re-imported off-cut they disagree. The compact
+objective anchors at the sheet's origin corner and works outward, which on an
+irregular sheet means it starts in the ragged end and works into the good one.
+
+The measure is the **largest axis-aligned rectangle still cuttable** from the
+free region, found by rasterising that region at 0.1 in and running a
+largest-rectangle-under-a-histogram scan. It is cached per layout state, since
+`polish_layout` scores every candidate relocation and the scan costs about
+100 ms. Used bounding box drops to a tie-break, so among layouts leaving the
+same board the tidier one still wins.
+
+Largest *connected* leftover is the obvious measure and the wrong one. An
+off-cut joined to another through a few thousandths of an inch of material is
+one polygon as far as shapely is concerned, and two useless slivers as far as
+a modeller is concerned. A rectangle is what goes back on the shelf. That
+first attempt is kept commented out in `packing.py`, together with the weights
+it failed to change anything at.
+
+Worth roughly what you would expect, not more: 30 rudder ribs onto a 24 x 12 in
+off-cut left a 5.1 x 9.3 in board under `compact` and 5.4 x 9.3 in under
+`offcut`. The bigger difference is where the cluster sits, clear of the good
+end rather than cutting across it.
+
+The web UI selects this automatically when a custom sheet shape is set, and
+reverts when the shape is cleared.
 
 ### Compact footprint objective
 

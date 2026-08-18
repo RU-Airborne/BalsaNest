@@ -15,6 +15,7 @@ from bisect import insort
 from typing import Any, Optional, Sequence
 
 import numpy as np
+from shapely import contains_xy as shp_contains_xy
 from shapely import transform as shp_transform
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry import box as shp_box
@@ -837,21 +838,12 @@ def item_metric(item: Item, mode: int, rng: random.Random) -> tuple:
     return (-envelope * (0.92 + 0.16 * jitter), -area, jitter, item.uid)
 
 
-def largest_offcut(layout: SheetLayout, sheet: SheetSpec) -> float:
-    """Area of the biggest single piece of stock this layout leaves behind.
 
-    What a modeller actually wants back from a sheet is one usable board, not
-    the same area in eight slivers. The packing score cannot see that: it
-    measures the used bounding box, which on a rectangular sheet is a decent
-    stand-in and on a re-imported off-cut is nearly meaningless.
-    """
-    if not layout.placements:
-        return 0.0
-    cached = getattr(layout, "_offcut_cache", None)
-    key = id(layout.placements[-1]), len(layout.placements)
-    if cached is not None and cached[0] == key:
-        return cached[1]
+_OFFCUT_CELL = 0.1
 
+
+def _free_grid(layout: SheetLayout, sheet: SheetSpec) -> Any:
+    """Boolean grid of the sheet: True where stock is still uncut."""
     region_info = sheet_usable_region(sheet)
     region = (
         region_info[0]
@@ -861,16 +853,56 @@ def largest_offcut(layout: SheetLayout, sheet: SheetSpec) -> float:
             sheet.width - sheet.margin, sheet.height - sheet.margin,
         )
     )
-    try:
+    nx = max(1, int(sheet.width / _OFFCUT_CELL))
+    ny = max(1, int(sheet.height / _OFFCUT_CELL))
+    xs = (np.arange(nx) + 0.5) * _OFFCUT_CELL
+    ys = (np.arange(ny) + 0.5) * _OFFCUT_CELL
+    gx, gy = np.meshgrid(xs, ys)
+
+    free = region
+    if layout.placements:
         taken = unary_union([p.geometry for p in layout.placements])
-        left = region.difference(taken.buffer(sheet.spacing / 2.0, quad_segs=1))
-        best = max(
-            (g.area for g in getattr(left, "geoms", [left])), default=0.0
-        )
-    except Exception:
-        best = 0.0
-    layout._offcut_cache = (key, best)
-    return best
+        free = region.difference(taken.buffer(sheet.spacing / 2.0, quad_segs=1))
+    return shp_contains_xy(free, gx.ravel(), gy.ravel()).reshape(ny, nx)
+
+
+def largest_free_rect(layout: SheetLayout, sheet: SheetSpec) -> float:
+    """Area of the biggest axis-aligned board still cuttable from this sheet."""
+    key = (len(layout.placements),
+           id(layout.placements[-1]) if layout.placements else 0)
+    cached = getattr(layout, "_board_cache", None)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+
+    grid = _free_grid(layout, sheet)
+    ny, nx = grid.shape
+    heights = np.zeros(nx, dtype=np.int32)
+    best = 0
+    for j in range(ny):
+        heights = np.where(grid[j], heights + 1, 0)
+        stack: list[tuple[int, int]] = []
+        for i in range(nx + 1):
+            cur = int(heights[i]) if i < nx else 0
+            start = i
+            while stack and stack[-1][1] >= cur:
+                s, hgt = stack.pop()
+                best = max(best, hgt * (i - s))
+                start = s
+            stack.append((start, cur))
+
+    area = best * _OFFCUT_CELL * _OFFCUT_CELL
+    layout._board_cache = (key, area)
+    return area
+
+
+#     def largest_offcut(layout, sheet):
+#         taken = unary_union([p.geometry for p in layout.placements])
+#         left = region.difference(taken.buffer(sheet.spacing / 2.0))
+#         return max((g.area for g in getattr(left, "geoms", [left])), default=0.0)
+#
+#     if sheet.scrap_priority > 0.0:
+#         bbox_area_total -= sheet.scrap_priority * largest_offcut(...)
+
 
 
 def score_layout(sheets: Sequence[SheetLayout], sheet: SheetSpec, unplaced_count: int = 0) -> tuple:
@@ -900,6 +932,16 @@ def score_layout(sheets: Sequence[SheetLayout], sheet: SheetSpec, unplaced_count
         pts = placed_hull_coords(layout.placements)
         if pts:
             hull_area_total += _hull_area(pts)
+
+    if sheet.objective == "offcut":
+        board = sum(largest_free_rect(l, sheet) for l in sheets if l.placements)
+        return (
+            unplaced_count,
+            len(sheets),
+            -round(board, 6),
+            round(bbox_area_total, 8),
+            round(used_long_total, 8),
+        )
 
     return (
         unplaced_count,

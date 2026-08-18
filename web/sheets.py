@@ -12,13 +12,28 @@ from .previews import (
     grid_background_array,
 )
 
+TIGHT = "Tightest layout"
+OFFCUT = "Largest usable off-cut"
+
+# Shown in the outline panel whenever the objective was switched for you.
+SWITCH_NOTE = (
+    '<div style="margin-top:6px;padding:6px 9px;border-radius:6px;'
+    'background:rgba(46,139,87,0.16);border:1px solid #2e8b57;'
+    'font-size:12px;line-height:1.35">'
+    "<b>Optimize for</b> switched to <b>Largest usable off-cut</b>. "
+    "On an odd-shaped sheet, packing into the smallest rectangle tends to eat "
+    "into the good end. Change it back if you would rather have the tightest "
+    "layout."
+    "</div>"
+)
+
 
 def set_outline_from_file(path: Optional[str], sheet_w: float, sheet_h: float):
     """Load an uploaded outline drawing as the custom sheet shape."""
     if not path:
         return (
             None, gr.update(value="", visible=False), gr.update(), gr.update(),
-            empty_sheet_viz(None, sheet_w, sheet_h),
+            empty_sheet_viz(None, sheet_w, sheet_h), gr.update(value=TIGHT),
         )
     try:
         boundary, w, h = load_sheet_boundary(Path(path), PREVIEW_SAMPLE_STEP)
@@ -27,6 +42,9 @@ def set_outline_from_file(path: Optional[str], sheet_w: float, sheet_h: float):
     holes = len(boundary.interiors)
     note = "<b>Custom sheet shape active</b>" + (
         f" ({holes} blocked hole(s))" if holes else ""
+    ) + SWITCH_NOTE
+    gr.Warning(
+        "Custom sheet shape: Optimize for switched to Largest usable off-cut."
     )
     # The WKT rides along with the path so a nesting run can draw the custom
     # sheet on its very first frame, before it re-reads the drawing at the
@@ -38,6 +56,7 @@ def set_outline_from_file(path: Optional[str], sheet_w: float, sheet_h: float):
         gr.update(value=round(w, 3)),
         gr.update(value=round(h, 3)),
         empty_sheet_viz(boundary, w, h),
+        gr.update(value=OFFCUT),
     )
 
 
@@ -105,7 +124,10 @@ def set_outline_from_drawing(editor_value: Any, sheet_w: float, sheet_h: float):
         raise gr.Error("The traced shape is under half an inch. Draw it larger.")
 
     w, h = float(sheet_w), float(sheet_h)
-    note = "<b>Drawn sheet shape active</b>"
+    note = "<b>Drawn sheet shape active</b>" + SWITCH_NOTE
+    gr.Warning(
+        "Drawn sheet shape: Optimize for switched to Largest usable off-cut."
+    )
     state = {"kind": "wkt", "wkt": poly.wkt, "w": w, "h": h}
     # The drawing window is closed by a chained step in the UI, NOT from here:
     # closing it re-renders the modal away while this event is still running,
@@ -116,4 +138,5 @@ def set_outline_from_drawing(editor_value: Any, sheet_w: float, sheet_h: float):
         gr.update(),
         gr.update(),
         empty_sheet_viz(poly, w, h),
+        gr.update(value=OFFCUT),
     )

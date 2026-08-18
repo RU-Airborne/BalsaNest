@@ -98,6 +98,7 @@ def run_nest(
     allow_holes: bool,
     allow_partial: bool,
     compress: bool,
+    objective: str,
     grid_step: float,
     sample_step: float,
     weld: float,
@@ -178,6 +179,8 @@ def run_nest(
             allow_mirror=bool(allow_mirror),
             allow_nesting_in_holes=bool(allow_holes),
             compress=bool(compress),
+            objective="offcut" if str(objective).startswith("Largest")
+            else "compact",
             boundary=boundary,
         )
         sheet.validate()
