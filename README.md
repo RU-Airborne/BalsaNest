@@ -232,7 +232,14 @@ only opened up later.
   each generation. Already tried orders are remembered.
 - **Optimization passes / Maximum generations** — how long the chosen
   optimizer works.
-- **Allow parts to be flipped (mirrored)** — mirror images pack tighter; turn
+- **Squeeze the finished layout**: after the optimizer is done, this pulls the
+  used length in and shuffles the parts to make them fit, over and over, for as
+  long as it keeps working. It is allowed to let parts overlap while it
+  shuffles, which is how a whole cluster can rearrange at once instead of one
+  part at a time. A squeeze is kept only if every gap still meets your spacing
+  and the layout genuinely came out tighter. It cannot make a nest worse
+  than the one the optimizer produced. Costs extra time at the end of a run.
+- **Allow parts to be flipped (mirrored)**: mirror images pack tighter. Turn
   off if parts have a "good" face.
 - **Nest small parts inside cut-outs** — use the waste inside lightening holes.
 - **Keep a partial result** — if not everything fits, still get the sheets
