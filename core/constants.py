@@ -1,7 +1,5 @@
 """Physical constants, SVG namespaces and unit tables."""
 
-from __future__ import annotations
-
 import re
 import xml.etree.ElementTree as ET
 

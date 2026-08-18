@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import tempfile
 from pathlib import Path
 from typing import Any, Optional
@@ -7,7 +5,7 @@ from typing import Any, Optional
 from core import OutputOptions, SheetLayout, SheetSpec, write_sheet_svg
 from core.svg_geometry import path_to_local_inches
 
-# Coarse sampling for previews/dims only; nesting re-loads parts at the
+# Coarse sampling for previews and dimensions only. Nesting re-loads parts at the
 # user-chosen accuracy.
 PREVIEW_SAMPLE_STEP = 0.02
 
@@ -37,7 +35,7 @@ def _geometry_rings_d(geom: Any) -> str:
 def part_preview_datauri(part: Any) -> str:
     """Render a small inline-SVG thumbnail of a LoadedPart.
 
-    Prefers the sampled collision geometry (compact, always valid); falls back
+    Prefers the sampled collision geometry (compact, always valid), falling back
     to the exact imported paths for parts whose geometry is degenerate."""
     w, h = part.base_width_in, part.base_height_in
     pad = 0.03 * max(w, h) + 0.01
@@ -149,14 +147,12 @@ def sheets_html(files: list[Path], summary: dict) -> str:
     for i, (svg, info) in enumerate(zip(svg_files, summary["sheets"]), start=1):
         html_parts.append(
             f'<div style="margin-bottom:2px;font-weight:600">Sheet {i} / '
-            f'{len(svg_files)} &mdash; {info["part_count"]} parts, '
+            f'{len(svg_files)}: {info["part_count"]} parts, '
             f'~{info["approx_part_area_utilization_percent"]}% material used</div>'
             + ruled_img_html(svg_file_to_img(svg), sheet_w, sheet_h)
         )
     return "".join(html_parts)
 
-
-# --- graph-paper drawing canvas ----------------------------------------------
 
 _GRID_FILE_CACHE: dict[tuple, str] = {}
 _GRID_ARRAY_CACHE: dict[tuple, Any] = {}
@@ -166,7 +162,7 @@ def grid_canvas_file(w_in: float, h_in: float, cw: int, ch: int) -> str:
     """Graph-paper drawing background as a PNG file: 1-inch grid with numbers
     along the top and left edges. Baked into the canvas so it stays aligned
     under the editor's zoom and pan, unlike an external ruler. Passed to the
-    editor as a plain filepath -- the form Gradio serves most reliably."""
+    editor as a plain filepath, the form Gradio serves most reliably."""
     key = (round(w_in, 3), round(h_in, 3), cw, ch)
     cached = _GRID_FILE_CACHE.get(key)
     if cached and Path(cached).exists():
@@ -218,8 +214,6 @@ def grid_background_array(w_in: float, h_in: float, cw: int, ch: int):
     return _GRID_ARRAY_CACHE.get(key)
 
 
-# --- sheet-shape previews ----------------------------------------------------
-
 def _poly_d(poly: Any) -> str:
     def ring(coords) -> str:
         return "M " + " L ".join(f"{x:.3f},{y:.3f}" for x, y in coords) + " Z"
@@ -255,6 +249,6 @@ def empty_sheet_viz(boundary: Optional[Any], w: float, h: float) -> str:
     kind = "Custom sheet shape" if boundary is not None else "Empty sheet"
     return (
         f'<div style="margin-bottom:2px;font-weight:600">{kind} '
-        f"&mdash; {float(w):.2f} &times; {float(h):.2f} in</div>"
+        f"is {float(w):.2f} &times; {float(h):.2f} in</div>"
         + ruled_img_html(svg_file_to_img(out), float(w), float(h))
     )

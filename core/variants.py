@@ -1,7 +1,3 @@
-"""Grain rules -> allowed orientations -> concrete :class:`Variant` set."""
-
-from __future__ import annotations
-
 from typing import Any, Sequence
 
 from shapely.affinity import rotate as shp_rotate

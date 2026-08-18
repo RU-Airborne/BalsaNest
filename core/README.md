@@ -24,6 +24,8 @@ core/                          # the nesting library, one module per concern
   nfp.py                       #   no-fit-polygon exact-contact candidates
   packing.py                   #   greedy engine: collision, compaction, passes
   ga.py                        #   genetic algorithm over the insertion order
+  compress.py                  #   shrink-and-repair squeeze over a finished nest
+  parallel.py                  #   worker pool: a generation packed side by side
   capacity.py                  #   up-front oversize / capacity checks
   labels.py                    #   raster-band label planning
   output.py                    #   SvgSheetWriter, kerf offset, cut order,
@@ -69,6 +71,8 @@ tests/
    |  packing.py   greedy engine: pack_in_order,              |
    |               heuristic_passes, polish_layout            |
    |  ga.py        genetic algorithm over insertion order     |
+   |  compress.py  shrink-and-repair squeeze of the result    |
+   |  parallel.py  worker pool, one generation at a time      |
    |  nfp.py       no-fit-polygon exact-contact seeds         |
    |  holes.py     scrap-hole / concave-pocket nesting        |
    +---------------------------+------------------------------+
@@ -85,16 +89,16 @@ tests/
 
 
 Each stage is a module with a single responsibility, wired together only through
-the dataclasses in `models.py`, so a module can be changed or replaced in
+the dataclasses in `models.py`. A module can be changed or replaced in
 isolation. Importers share one seam: `SvgPartImporter`, `DxfPartImporter` and
 `PdfPartImporter` all expose the same `load()` and converge on svgpathtools
 paths (`load_sheet_boundary` reuses them for stock outlines). The optimisers
 share another: `pack_in_order` is the greedy evaluation primitive, consumed by
 the multi-pass heuristic (`heuristic_passes` / `optimize_layout`) and the
-genetic algorithm (`ga_generations` / `optimize_layout_ga`) alike — both are
+genetic algorithm (`ga_generations` / `optimize_layout_ga`) alike, since both are
 generators so front-ends can stream a live preview per pass/generation. Two
 front-ends exist today: the terminal CLI (`cli.py`) and the Gradio web UI
-(`webui.py`); anything new only needs to build a `JobSpec` and call `run_job`
+(`webui.py`). Anything new only needs to build a `JobSpec` and call `run_job`
 or drive the same pipeline functions directly.
 
 
@@ -115,24 +119,24 @@ or drive the same pipeline functions directly.
 - uses actual polygonal geometry rather than only rectangular bounding boxes;
 - **no-fit-polygon (NFP) contact placement**: candidate positions are generated
   along each placed part's exact spacing-inflated silhouette (Minkowski sums of
-  convex decompositions), so parts hug curved and slanted neighbours at true
-  contact — discs nestle hexagonally, hypotenuses mate — instead of only
+  convex decompositions). Parts hug curved and slanted neighbours at true
+  contact (discs nestle hexagonally, hypotenuses mate) instead of only
   aligning to bounding-box edges;
 - **bottom-left compaction** slides each part into the tightest reachable spot,
   including the concave pocket of a flipped neighbour;
 - **nests small parts inside larger parts' scrap cut-outs** (e.g. aileron ribs
-  inside a bulkhead's lightening window), validated to sit clear of the material —
+  inside a bulkhead's lightening window), validated to sit clear of the material,
   and a placement in scrap always wins over open sheet space, since scrap costs
   nothing;
 - **packs into concave pockets** (an arch-shaped bulkhead cutaway, a C-channel
   opening) that plain bounding-box packing never looks inside;
 - **stitches segment-soup outlines**: SolidWorks/Inkscape exports that draw one
   outline as dozens of disconnected segments are chained back into closed
-  contours, so hole detection, labels and collision stay correct;
+  contours, keeping hole detection, labels and collision correct;
 - **welds doubled contours** (`weld_distance`, default `0.02` in): a tapered
   part exported from its 3D body carries the outline of both of its faces a few
-  thousandths of an inch apart, so every contour — outline and each lightening
-  hole — is drawn twice, which the even-odd rule reads as a hairline ring
+  thousandths of an inch apart. Every contour, the outline and each lightening
+  hole, is drawn twice, which the even-odd rule reads as a hairline ring
   enclosing a hole the size of the part, with every cut-out inverted. Drawings
   measured as genuinely doubled are rebuilt with everything closer than the
   weld distance treated as one cut line, and their cut paths are replaced by
@@ -143,14 +147,14 @@ or drive the same pipeline functions directly.
 - **catches jobs that will not fit** up front (a part too big for the sheet, or a
   quantity that exceeds an optional sheet cap) with a clear message;
 - runs several greedy packing passes with adaptive early-stopping and keeps the
-  best result — or an optional **genetic algorithm** that evolves the insertion
+  best result, or an optional **genetic algorithm** that evolves the insertion
   order live until stopped;
 - supports **non-rectangular stock**: a polygon sheet outline (uploaded as
   SVG/DXF/PDF or painted by hand in the web UI) with interior holes treated as
-  blocked areas — the outline keeps its drawn position on its page, and the
-  page size becomes the sheet size, so layouts line up with the physical
+  blocked areas. The outline keeps its drawn position on its page, and the
+  page size becomes the sheet size. Layouts line up with the physical
   board. Candidate seeding simplifies dense curvy outlines first (a
-  re-imported scrap sheet carries thousands of sampled vertices), so packing
+  re-imported scrap sheet carries thousands of sampled vertices). Packing
   spreads over the whole usable region instead of crowding one corner;
 - optional **common-line merging**: with part spacing 0, an edge shared by two
   touching parts is cut once instead of twice (with kerf compensation on, a
@@ -165,20 +169,20 @@ or drive the same pipeline functions directly.
   an outline SVG at the sheet's page size, ready to reuse as custom stock;
 - automatically creates additional stock sheets if everything cannot fit on one;
 - writes physical-size SVG output on three layers:
-  - **Cut** — no fill, full red `#ff0000`, `1 px` stroke;
-  - **Raster labels** — each part's file-name engraved in blue by default,
+  - **Cut**: no fill, full red `#ff0000`, `1 px` stroke;
+  - **Raster labels**: each part's file-name engraved in blue by default,
     horizontal, in a configurable font, and aligned onto shared rows so the
     laser head travels less;
-  - **Debug** (optional) — blue bounding boxes + sheet outline for inspection;
+  - **Debug** (optional): blue bounding boxes + sheet outline for inspection;
   - 96 px/in viewBox throughout;
 - emits a JSON summary with placements, rotation/mirror state, footprint, nested
   parts and approximate utilization.
 
 ## Important limitation
 
-The packing engine proposes candidate positions from **true no-fit polygons** (exact-contact geometry, always on). The placement *order* is a greedy multi-pass **heuristic** by default; an optional SVGnest-style **genetic algorithm** (`optimize_layout_ga`, selectable as the optimizer in the web UI) evolves the insertion order for tighter nests at the cost of much longer runtimes. Neither is a mathematically guaranteed globally optimal nest.
+The packing engine proposes candidate positions from **true no-fit polygons** (exact-contact geometry, always on). The placement *order* is a greedy multi-pass **heuristic** by default. An optional SVGnest-style **genetic algorithm** (`optimize_layout_ga`, selectable as the optimizer in the web UI) evolves the insertion order for tighter nests at the cost of much longer runtimes. Neither is a mathematically guaranteed globally optimal nest.
 
-The output writer can optionally **merge common cut lines** (`"merge_common_cuts": true`, or the toggle in the web UI): with part spacing 0, an edge shared by two touching parts is cut once instead of twice. Only exactly coincident segments merge. With kerf compensation on, coincidence instead happens at spacing = kerf: each outline grows half a kerf into the gap, so both beam centrelines land on the gap's midline and merge — and both parts still come out exact.
+The output writer can optionally **merge common cut lines** (`"merge_common_cuts": true`, or the toggle in the web UI): with part spacing 0, an edge shared by two touching parts is cut once instead of twice. Only exactly coincident segments merge. With kerf compensation on, coincidence instead happens at spacing = kerf: each outline grows half a kerf into the gap, so both beam centrelines land on the gap's midline and merge, and both parts still come out exact.
 
 Importers: **SVG**, **DXF**, and **PDF** (SolidWorks can export DXF or PDF
 directly, skipping the Inkscape conversion step entirely). DWG is a proprietary
@@ -193,20 +197,20 @@ python webui.py
 Opens `http://127.0.0.1:7860` in the browser (AUTOMATIC1111-style dark UI,
 red accent). The page is four sections:
 
-- **Visualizer** — an elevated canvas that always shows the sheet (empty at
+- **Visualizer**: an elevated canvas that always shows the sheet (empty at
   first, with browser-side inch rulers, 0,0 top-left). Pressing **Start**
   streams the layout live: the heuristic shows every pass, the genetic
   algorithm shows every generation under a pulsing EVOLVING banner until you
   press **Stop evolving** (or its generation cap is reached). A debug-overlay
   toggle (on by default) shows part bboxes, margins, scrap cut-outs and
-  pockets, and can be flipped at any moment — even mid-run.
-- **Output** — download the laser-ready SVGs + JSON summary (real hairline
-  strokes; the visualizer uses thickened preview strokes), plus optional
+  pockets, and can be flipped at any moment, even mid-run.
+- **Output**: download the laser-ready SVGs + JSON summary (real hairline
+  strokes, while the visualizer uses thickened preview strokes), plus optional
   cuts-only twins and leftover-material outlines per sheet. Warnings (red)
   and notes (amber) from the run appear underneath.
-- **Save and load job** — one JSON file bundling the part drawings themselves
-  plus every setting; loading restores the whole session.
-- **Settings** — three columns: sheet (dimensions, grain direction with wood
+- **Save and load job**: one JSON file bundling the part drawings themselves
+  plus every setting. Loading restores the whole session.
+- **Settings**: three columns: sheet (dimensions, grain direction with wood
   thumbnails, and a **custom sheet shape** sub-section where you upload an
   outline or paint one on a graph-paper canvas in a floating window), nesting
   (optimizer choice, passes/generations, mirroring, hole-nesting, partial
@@ -214,7 +218,7 @@ red accent). The page is four sections:
   raster-vs-outline sample and a font dropdown listing every installed font
   with a live preview, colours, hairline / px / inch cut strokes, kerf
   compensation with a picture legend, common-line merging).
-- **Parts** — drag-and-drop SVG/DXF/PDF files; each becomes a card with a
+- **Parts**: drag-and-drop SVG/DXF/PDF files. Each becomes a card with a
   vector thumbnail, measured size in inches, quantity slider, grain alignment
   radio (with a picture legend), a DXF unit override when needed, and a
   remove button.
@@ -319,17 +323,17 @@ Example:
 | `max_sheets` | `null` | Hard cap on stock sheets. `null` = add sheets as needed. If a job needs more, it errors and lists the parts that did not fit. |
 | `allow_mirror` | `true` | Allow mirrored/flipped orientations (grain is preserved). Doubles the useful orientations for asymmetric parts. |
 | `allow_nesting_in_holes` | `true` | Allow small parts to be placed inside larger parts' scrap cut-outs. |
-| `min_hole_area` | `0.02` | in²; ignore cut-outs smaller than this when hole-nesting. |
-| `outline_file` | – | Optional non-rectangular stock: an SVG/DXF/PDF drawing whose largest closed contour becomes the sheet shape (interior contours mark blocked holes/defects). The file's page size overrides `width`/`height` and the shape keeps its drawn position on the page; DXF has no page, so the shape's bounding box is used instead. In the web UI you can also upload this file or paint the shape directly on a canvas. |
+| `min_hole_area` | `0.02` | in². Cut-outs smaller than this are ignored when hole-nesting. |
+| `outline_file` | – | Optional non-rectangular stock: an SVG/DXF/PDF drawing whose largest closed contour becomes the sheet shape (interior contours mark blocked holes/defects). The file's page size overrides `width`/`height` and the shape keeps its drawn position on the page. DXF has no page, so the shape's bounding box is used instead. In the web UI you can also upload this file or paint the shape directly on a canvas. |
 
 ### Doubled-contour repair (`weld_distance`)
 
 | key | default | meaning |
 | --- | --- | --- |
-| `weld_distance` | `0.02` | in; drawn lines closer together than this are the same cut. Set per part (`"weld_distance"` inside a `parts` entry) to override the job value for one file. `0` disables the repair. |
+| `weld_distance` | `0.02` | in. Drawn lines closer together than this are the same cut. Set per part (`"weld_distance"` inside a `parts` entry) to override the job value for one file. `0` disables the repair. |
 
-Exporting a **tapered** part from its 3D body — a wing or stabiliser rib whose
-two faces have different profiles — draws both face outlines, typically a few
+Exporting a **tapered** part from its 3D body (a wing or stabiliser rib whose
+two faces have different profiles) draws both face outlines, typically a few
 thousandths of an inch apart. Every contour is then doubled, and the even-odd
 rule reads each pair as a contour with another just inside it: a hairline ring
 of material enclosing a hole the size of the whole part, with every real
@@ -340,36 +344,36 @@ is rebuilt from its raw strokes with everything closer than `weld_distance`
 welded into one cut line, and its cut paths are replaced by the welded contours
 so the laser stops cutting each line twice. Drawings that are not doubled
 measure a couple of percent at most and are left untouched, byte for byte. The
-default is about a laser kerf in balsa, so two lines that close together could
-not have been cut as separate features anyway; raise it if a part's faces are
+default is about a laser kerf in balsa: two lines that close together could
+not have been cut as separate features anyway. Raise it if a part's faces are
 further apart than that.
 
-**Which contour survives**: the weld keeps the **outer** of each pair — the
+**Which contour survives**: the weld keeps the **outer** of each pair, the
 part comes out at its larger face and its cut-outs at their larger size. The
 two face profiles are not cleanly nested (they meet exactly where the taper
 runs out, so neither is the inner one all the way round), and the difference is
 bounded by `weld_distance` by construction: strokes further apart than that are
 never fused, and a drawing whose copies all sit beyond it is not repaired at
 all. The note reports the widest gap actually welded (`welded lines up to
-0.0129 in apart`), so it is visible whether the repair moved a line by a
+0.0129 in apart`). You can see whether the repair moved a line by a
 thousandth of an inch or by something worth a second look.
 
 ### Machine defaults file
 
-Settings that describe your machine and shop conventions — sheet size, laser
-colours, stroke style, label mode — rarely change per job. Put them once in
+Settings that describe your machine and shop conventions, such as sheet size, laser
+colours, stroke style and label mode, rarely change per job. Put them once in
 **`balsanest_defaults.json`** (looked up in the job config's directory first,
 then the current working directory) and every job config only needs to carry
 what is specific to that job:
 
 - job config values always **override** the defaults (deep-merged key by key);
-- the interactive wizard uses the defaults as its suggested answers, so a run
-  on the usual machine is just Enter-Enter-Enter;
-- `parts` and `output` are ignored in the defaults file — it describes the
+- the interactive wizard uses the defaults as its suggested answers. A run
+  on the usual machine is just Enter-Enter-Enter,
+- `parts` and `output` are ignored in the defaults file, which describes the
   machine, not a job.
 
 The repository ships a `balsanest_defaults.json` listing **every supported
-parameter at its built-in default value**, so it doubles as a reference: edit
+parameter at its built-in default value**, doubling as a reference: edit
 the values you care about (e.g. your laser's `cut_color` / `cut_stroke`) and
 delete nothing.
 
@@ -385,7 +389,7 @@ delete nothing.
 --max-sheets N       cap the number of stock sheets
 --allow-partial      write whatever fits instead of erroring on an over-full job
 --weld INCHES        distance across which drawn lines count as the same cut
-                     (doubled-contour repair; default 0.02, 0 disables)
+                     (doubled-contour repair, default 0.02, 0 disables)
 ```
 
 ## Behaviours worth knowing
@@ -395,28 +399,28 @@ delete nothing.
 Every placed part is engraved with its source file name (without extension) in
 **blue** (default, editable) on the `Raster labels` layer. Key properties:
 
-- **Always inside the material.** Several anchor points are tried — the part's
+- **Always inside the material.** Several anchor points are tried: the part's
   *pole of inaccessibility* (the interior point farthest from every edge and
   hole) plus a representative point of each lobe left after eroding the shape
-  at a few depths — and the anchor allowing the largest font wins; the block
+  at a few depths. The anchor allowing the largest font wins, and the block
   is then recentred in its free space and grown again. Size only grows as far
-  as the whole text block still passes an actual containment test, so it can
-  never spill past the outline, cross a cut-out, or run off the sheet —
+  as the whole text block still passes an actual containment test. It can
+  never spill past the outline, cross a cut-out, or run off the sheet,
   including on tapered airfoils and thin bulkhead frames.
 - **Adaptive font**, sized to the *part*, not just the local material width.
-- **Any installed font family** — the web UI measures the chosen font file's
-  real average character advance, so the fit estimate matches what the
-  renderer will draw; unknown fonts fall back to a conservative built-in
+- **Any installed font family**: the web UI measures the chosen font file's
+  real average character advance. The fit estimate matches what the
+  renderer will draw. Unknown fonts fall back to a conservative built-in
   table.
 - **Multi-line** wrapping when that yields a larger, legible font. Multi-word
-  names break on word boundaries (`aileron_rib` → `aileron` / `rib`); a single
+  names break on word boundaries (`aileron_rib` → `aileron` / `rib`), and a single
   word stays on one line unless it genuinely cannot fit.
-- **Always horizontal** — a laser head rasters horizontally, so vertical text is
+- **Always horizontal**: a laser head rasters horizontally. Vertical text is
   much slower. Labels **slide vertically inside their part** to join nearby
   labels on a shared raster band (fewer slow vertical head moves), are pulled
   toward each other horizontally to shorten the sweep, and are **never banded
   with labels far across the sheet** (a shared band's raster lines sweep its
-  whole x-span, so distant labels are cheaper on separate bands).
+  whole x-span, and distant labels are cheaper on separate bands).
 - Parts too small to hold a legible label are **left blank and reported** as a
   warning rather than mislabelled.
 
@@ -424,7 +428,7 @@ Every placed part is engraved with its source file name (without extension) in
 
 With `allow_mirror` on, each part also gets mirrored orientations. Because the
 reflection is across an axis aligned with the grain, the material grain
-direction is preserved, so this is safe for `parallel` / `perpendicular` parts.
+direction is preserved. Safe for `parallel` and `perpendicular` parts.
 Airfoils then interlock with the flat/thin trailing edges together and the
 curved noses tucked against each other. Mirror copies that merely reproduce a
 plain rotation (symmetric parts) are dropped automatically.
@@ -432,7 +436,7 @@ plain rotation (symmetric parts) are dropped automatically.
 ### No-fit-polygon contact placement
 
 For every (placed part, incoming part) pair, BalsaNest computes the **no-fit
-polygon** — the region of positions where the incoming part would overlap the
+polygon**: the region of positions where the incoming part would overlap the
 placed one, built as Minkowski sums of convex decompositions of the two
 outlines and inflated by the part spacing. The boundary of that region is the
 locus of *exact contact at the minimum legal separation*. Candidate positions
@@ -443,15 +447,15 @@ sheet margin.
 This finds the tight spots that bounding-box contact lines and bottom-left
 sliding can never reach: a disc nestling into the valley between two discs
 (hexagonal packing), slanted edges mating face-to-face, a part teleported into
-an enclosure it could never *slide* into (fine — parts are cut, not slid). On
+an enclosure it could never *slide* into (fine, since parts are cut, not slid). On
 the airfoil example job this shortens the used strip from ~24.7 in to ~16.7 in
 of stock.
 
 NFPs are computed on slightly inflated vertex-light supersets of the outlines
-(cached per orientation pair), so every proposed seed is guaranteed feasible
-for the exact geometry; the exact collision test still confirms each one, and
+(cached per orientation pair). Every proposed seed is guaranteed feasible
+for the exact geometry. The exact collision test still confirms each one, and
 the existing exact-geometry compaction does the final snugging. NFP contact
-placement is always on; each part pair falls back to axis-aligned contact
+placement is always on, and each part pair falls back to axis-aligned contact
 lines if its NFP computation fails.
 
 ### Nesting inside scrap cut-outs
@@ -466,7 +470,7 @@ edge. The summary and terminal report every such nesting, e.g.
    (verify those cut-outs are through-cut scrap, not engraved features, before cutting.)
 ```
 
-A feasible scrap-hole placement always **wins outright** over open sheet space —
+A feasible scrap-hole placement always **wins outright** over open sheet space,
 open sheet next to a part is usable stock, while a cut-out is waste either way.
 Parts are packed **tightly inside holes** too: compacted into the hole's corner
 and seeded against already-nested neighbours so they interlock instead of
@@ -476,7 +480,7 @@ offers those cut-outs to even smaller parts.
 
 Multi-view exports are handled at load time: when a file contains several
 identical disconnected copies of the same piece (a SolidWorks drawing with two
-views), BalsaNest keeps **one copy** and says so — `quantity` then counts single
+views), BalsaNest keeps **one copy** and says so. `quantity` then counts single
 physical pieces instead of rigid view-groups pinned at their drawn offsets.
 
 **Safety note:** BalsaNest treats every closed interior contour as a through-cut
@@ -491,14 +495,14 @@ Parts whose outline curves inward (an arch-shaped bulkhead cutaway, an airfoil's
 underside, a C-channel) leave pockets that bounding-box candidate positions never
 propose. BalsaNest detects each placed part's pockets (convex hull minus the
 outline, shrunk by the spacing) and seeds candidate positions inside them. Unlike
-scrap holes, pockets are ordinary connected stock, so these candidates compete on
-the normal packing objective — they win whenever they tighten the layout.
+scrap holes, pockets are ordinary connected stock. These candidates compete on
+the normal packing objective and win whenever they tighten the layout.
 
 Pocket seeds are also proposed when the incoming part is **bigger** than the
 pocket: aligned to the pocket mouth so it can dip in partially. Combined with
 180° rotations, this is what lets two arch-shaped parts **interlock
-tetris-style** ("handshake") — one part flipped so its arch wraps around the
-other's — instead of stacking side by side.
+tetris-style** ("handshake"), one part flipped so its arch wraps around the
+other's, instead of stacking side by side.
 
 ### Debug layer (`--debug` / `"debug_borders": true`)
 
@@ -508,12 +512,12 @@ The `Debug (do not cut)` layer visualises what the nester saw. Colours:
 | --- | --- |
 | **blue** solid rects | each part's placed bounding box |
 | **blue** dashed rect | the sheet outline |
-| **orange** band | edge margin — unusable border zone |
+| **orange** band | edge margin, the unusable border zone |
 | **green** fill | scrap cut-outs large enough for hole-nesting (already shrunk by the spacing) |
 | **purple** fill | concave pockets the packer may fill |
 
 A colour **legend** is embedded on the layer itself, placed in free sheet space
-beside the used footprint, so a printout or screenshot is self-explaining.
+beside the used footprint. A printout or screenshot then explains itself.
 
 Delete the whole layer before cutting (it is grouped as one Inkscape layer).
 
@@ -522,13 +526,13 @@ Delete the whole layer before cutting (it is grouped as one Inkscape layer).
 After the greedy passes, the best layout gets a **polish pass**: each part on the
 footprint boundary (and each small part) is pulled out and re-placed with full
 knowledge of everyone else's final position, keeping only moves that strictly
-shrink the layout score. This is how parts placed early — before pockets and
-scrap holes existed — migrate into them afterwards.
+shrink the layout score. This is how parts placed early, before pockets and
+scrap holes existed, migrate into them afterwards.
 
-The layout score is bounding-box area, which is position-independent, so a
+The layout score is bounding-box area, which is position-independent. A
 polish sweep can tighten an interlock while the cluster as a whole drifts off
 the corner. The pass therefore ends by **snapping each sheet's cluster back to
-the margin corner** — a rigid translation that preserves every gap, applied on
+the margin corner**: a rigid translation that preserves every gap, applied on
 polygonal sheets only when the moved cluster still fits the usable region.
 
 ### Compact footprint objective
@@ -539,7 +543,7 @@ so the used stock stays a small clean rectangle and the off-cut stays one large
 usable piece. The secondary criterion is the **convex-hull area of the whole
 cluster**: every position *inside* the current bounding box ties on the first
 criterion, and the hull term is what tells a gap-filling position (adds no hull
-area) apart from one that merely leans against the cluster's edge — so internal
+area) apart from one that merely leans against the cluster's edge. Internal
 gaps are actively filled before the footprint grows. Parts therefore cluster
 into one tight block instead of drifting to opposite ends of the sheet. The two
 deliberate exceptions: a part that fits inside another part's **scrap cut-out**
@@ -634,26 +638,26 @@ Everything is configurable for other machines:
 {
   "cut_color": "#ff0000",
   "cut_stroke": "hairline",          // or a number = stroke width in px
-  "kerf_in": 0.0,                    // beam width; cut paths offset outward by half
+  "kerf_in": 0.0,                    // beam width, cut paths offset outward by half
   "labels": { "mode": "raster", "font": "sans-serif", "color": "#0000ff", "outline_color": "#0000ff" },
   "group_labels_with_parts": true
 }
 ```
 
 Set `"labels": {"mode": "outline"}` for hairline outline-engraved names
-instead of raster fills — outline engraving is far faster.
+instead of raster fills, since outline engraving is far faster.
 
 ### Part + label grouping
 
 By default each part's cut paths **and its name label live in one Inkscape
-group** (`group_labels_with_parts`), so selecting or moving a part in Inkscape
+group** (`group_labels_with_parts`). Selecting or moving a part in Inkscape
 brings its label along. Colours still separate the laser operations. Set the
 option to `false` to get separate `Cut` / `Labels` layers instead.
 
 ### DXF input
 
-Part files may be `.dxf` (exported straight from SolidWorks — no Inkscape
-conversion step). Units are read from the DXF header (`$INSUNITS`); a file with
+Part files may be `.dxf` (exported straight from SolidWorks, no Inkscape
+conversion step). Units are read from the DXF header (`$INSUNITS`). A file with
 no units declared is assumed to be inches with a printed NOTE, and can be forced
 per part:
 
@@ -664,10 +668,10 @@ per part:
 ### PDF input
 
 Part files may also be `.pdf` (exported straight from SolidWorks). Only vector
-geometry is read — text is ignored, so the SolidWorks watermark at the bottom
-of the page ("SOLIDWORKS Educational Product...") is dropped automatically;
+geometry is read. Text is ignored, which drops the SolidWorks watermark at the bottom
+of the page ("SOLIDWORKS Educational Product...") is dropped automatically,
 vectorized watermarks confined to the bottom page edge are filtered out too
-(with a printed NOTE). PDF user space is a fixed 72 points per inch, so a 1:1
+(with a printed NOTE). PDF user space is a fixed 72 points per inch. A 1:1
 export nests at true physical scale. Multi-page PDFs use page 1 only.
 
 ## Accuracy controls

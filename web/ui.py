@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 
 import gradio as gr
@@ -33,7 +31,7 @@ def build_ui() -> gr.Blocks:
     with gr.Blocks(title="BalsaNest") as demo:
         parts_state = gr.State([])
         # Rebuilding the part cards mid-edit invalidates their event ids (the
-        # browser then hits KeyError in the queue), so the cards render from
+        # browser then hits KeyError in the queue). The cards render from
         # this separate state, which only changes when the card layout itself
         # must change: files added/removed, or a units reload that alters a
         # part's dimensions. Plain field edits touch only parts_state.
@@ -232,6 +230,14 @@ def build_ui() -> gr.Blocks:
                         info="Places small parts inside the scrap area of bigger "
                         "parts' holes and cut-outs to save material.",
                     )
+                    compress_cb = gr.Checkbox(
+                        value=bool(d_sheet.get("compress", True)),
+                        label="Squeeze the finished layout",
+                        info="After optimizing, repeatedly pulls the used length "
+                        "in and shuffles the parts to fit, keeping the result "
+                        "only when it comes out tighter and still legal. Costs "
+                        "extra time at the end of a run.",
+                    )
                     allow_partial = gr.Checkbox(
                         value=False,
                         label="Keep a partial result if not everything fits",
@@ -351,7 +357,7 @@ def build_ui() -> gr.Blocks:
                         gr.HTML(KERF_RULE_HTML, padding=False)
 
 
-        # Floating drawing window: its contents are rendered on demand, so the
+        # Floating drawing window. Its contents are rendered on demand, and the
         # canvas always mounts while visible (a canvas created inside a hidden
         # container stays blank).
         draw_open = gr.State(False)
@@ -381,14 +387,14 @@ def build_ui() -> gr.Blocks:
                             f"paint the usable material (any colour that stands out "
                             f"from the white paper). The sheet stays **{w:g} x "
                             f"{h:g} in**; the painted area marks where parts may be "
-                            f"placed, exactly where you paint it -- so the layout "
+                            f"placed, exactly where you paint it, so the layout "
                             f"lines up with the real stock on the laser bed. The "
                             f"canvas has a 1-inch grid; the numbers along the top "
                             f"and left edges count inches from the top-left corner."
                         )
                         close_btn = gr.Button("Close", size="sm", scale=0, min_width=90)
                     editor = gr.Sketchpad(
-                        label=f"Sheet canvas ({w:g} x {h:g} in -- painted = usable material)",
+                        label=f"Sheet canvas ({w:g} x {h:g} in, painted = usable material)",
                         type="numpy",
                         canvas_size=(cw, ch),
                         value=grid_canvas_file(w, h, cw, ch),
@@ -401,7 +407,7 @@ def build_ui() -> gr.Blocks:
                     )
 
                 close_btn.click(lambda: False, None, draw_open, show_progress="hidden")
-                # The trash button wipes the grid background; restore it so the
+                # The trash button wipes the grid background. Restore it and the
                 # user can immediately redraw.
                 editor.clear(
                     lambda: grid_canvas_file(w, h, cw, ch),
@@ -414,7 +420,7 @@ def build_ui() -> gr.Blocks:
                     show_progress="minimal",
                 )
                 # Close the window only after the trace event has fully finished
-                # (closing re-renders this modal away; doing that mid-event leaves
+                # (closing re-renders this modal away, and doing that mid-event leaves
                 # the event's progress bar blinking forever). .success keeps it
                 # open when tracing failed with an error toast.
                 use_evt.success(
@@ -456,13 +462,13 @@ def build_ui() -> gr.Blocks:
                     parts = [dict(x) for x in parts]
                     parts[i]["units"] = value
                     reloaded = reload_with_units(parts, i)
-                    # Dimensions/preview changed, so this one does re-render.
+                    # Dimensions or preview changed. This one does re-render.
                     return reloaded, reloaded
                 return fn
 
             def _remove(i):
                 def fn(parts):
-                    # Push the shortened list into the upload component; its
+                    # Push the shortened list into the upload component. Its
                     # change event rebuilds both part states from there.
                     keep = [p["path"] for j, p in enumerate(parts) if j != i]
                     return gr.update(value=keep)
@@ -500,7 +506,7 @@ def build_ui() -> gr.Blocks:
                                             )
                                             continue
                                         gr.Markdown(
-                                            f"**{p['name']}** &nbsp;&mdash;&nbsp; "
+                                            f"**{p['name']}** &nbsp;&nbsp; "
                                             f"{p['width']:.3f} &times; {p['height']:.3f} in"
                                             + "".join(
                                                 f"\n\n<span style='color:#fa3'>NOTE: {n}</span>"
@@ -597,6 +603,7 @@ def build_ui() -> gr.Blocks:
                 parts_state, outline_state,
                 sheet_w, sheet_h, grain_axis, margin, spacing, max_sheets,
                 optimizer, passes, allow_mirror, allow_holes, allow_partial,
+                compress_cb,
                 grid_step, sample_step, weld, seed,
                 label_parts_cb, export_unlabeled_cb, export_scrap_cb,
                 label_mode, label_font_dd, label_color, outline_color, cut_color,
@@ -614,6 +621,7 @@ def build_ui() -> gr.Blocks:
                 sheet_w, sheet_h, grain_axis, margin, spacing, max_sheets,
                 outline_state, outline_html, outline_file, result_html,
                 optimizer, passes, allow_mirror, allow_holes, allow_partial,
+                compress_cb,
                 grid_step, sample_step, weld, seed,
                 label_parts_cb, export_unlabeled_cb, export_scrap_cb,
                 label_mode, label_font_dd, label_color, outline_color, cut_color,
@@ -668,6 +676,7 @@ def build_ui() -> gr.Blocks:
                 parts_state,
                 sheet_w, sheet_h, grain_axis, margin, spacing, max_sheets,
                 outline_state, optimizer, passes, allow_mirror, allow_holes, allow_partial,
+                compress_cb,
                 grid_step, sample_step, weld, seed,
                 label_parts_cb, export_unlabeled_cb, export_scrap_cb,
                 label_mode, label_font_dd, label_color, outline_color,

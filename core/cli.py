@@ -1,7 +1,5 @@
 """Terminal CLI."""
 
-from __future__ import annotations
-
 import argparse
 import sys
 from dataclasses import replace
@@ -25,8 +23,6 @@ from .packing import optimize_layout
 from .models import placement_bounds
 from .variants import allowed_rotations, make_items
 
-
-# --- prompt helpers ----------------------------------------------------------
 
 def ask(prompt: str, default: Optional[str] = None) -> str:
     suffix = f" [{default}]" if default is not None else ""
@@ -97,7 +93,7 @@ def interactive_specs() -> JobSpec:
     # on the usual machine is just Enter-Enter-Enter.
     defaults = load_defaults(Path.cwd())
     if defaults:
-        print(f"(defaults loaded from {DEFAULTS_FILENAME} -- press Enter to accept them)\n")
+        print(f"(defaults loaded from {DEFAULTS_FILENAME}, press Enter to accept them)\n")
     d_sheet = defaults.get("sheet", {})
 
     width = ask_float("Sheet width / X dimension", float(d_sheet.get("width", 32.0)))
@@ -168,7 +164,7 @@ def interactive_specs() -> JobSpec:
     seed = ask_int("Optimization random seed", int(defaults.get("seed", 42)), minimum=0)
 
     # Laser conventions (colours, stroke style, label mode) come from the
-    # defaults file; the wizard only opens them up on request.
+    # defaults file.
     base_options = output_options_from_config(defaults)
     label_parts = ask_bool("Engrave each part's file name as a label", base_options.label_parts)
     debug_borders = ask_bool(
@@ -226,8 +222,6 @@ def interactive_specs() -> JobSpec:
         weld_distance=float(defaults.get("weld_distance", DEFAULT_WELD_IN)),
     )
 
-
-# --- reporting ---------------------------------------------------------------
 
 def print_job(sheet: SheetSpec, requests: Sequence[PartRequest]) -> None:
     print("\nJob")
@@ -336,8 +330,6 @@ def run_job(job: JobSpec) -> list[Path]:
     )
     return files
 
-
-# --- argument parsing / entry point -----------------------------------------
 
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(

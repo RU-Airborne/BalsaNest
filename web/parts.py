@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Any, Optional
 
@@ -27,7 +25,7 @@ def sync_parts(file_list: Optional[list[str]], parts: list[dict]):
     Dropping a second batch of files onto a populated upload component can
     REPLACE its value instead of appending, silently losing earlier parts. So:
     if the new value contains files we have not seen, treat it as an addition
-    and merge with the existing list; only a subset of known files (the user
+    and merge with the existing list. Only a subset of known files (the user
     removed one with its X) rebuilds from the component value. Returns
     (parts, upload_component_update) so the merged list is pushed back into
     the component."""

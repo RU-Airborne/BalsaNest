@@ -1,7 +1,5 @@
 """Plain dataclasses shared across the pipeline."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -22,8 +20,10 @@ class SheetSpec:
     max_sheets: Optional[int] = None
     allow_mirror: bool = True
     compact: bool = True
+    # Run the shrink-and-repair pass after polishing
+    compress: bool = True
     allow_nesting_in_holes: bool = True
-    min_hole_area: float = 0.02  # in^2; ignore cut-outs smaller than this
+    min_hole_area: float = 0.02  # in^2, ignore cut-outs smaller than this
     boundary: Optional[Any] = None
 
     def validate(self) -> None:
@@ -81,11 +81,11 @@ class OutputOptions:
     label_max_lines: int = 4
     label_color: str = "#0000ff"
     # "raster": black filled text (engraved by rastering).
-    # "outline": hairline-stroked text (vector outline engrave -- much faster).
+    # "outline": hairline-stroked text (vector outline engrave, much faster).
     label_mode: str = "raster"
     label_outline_color: str = "#0000ff"
     # Font family written into the SVG text elements. Rendered by whatever
-    # opens the file, so it should be a font installed on that machine.
+    # opens the file. Pick one that is installed on that machine.
     label_font: str = "sans-serif"
     # Measured average character advance of that font (multiple of font size).
     # None falls back to the built-in per-family table.
@@ -105,13 +105,13 @@ class OutputOptions:
     # Emit each coincident cut segment once (Deepnest-style common-line
     # cutting): when two placed parts share an edge (only possible with
     # spacing = 0), the shared line is cut a single time. Only exactly
-    # overlapping segments merge; partial overlaps are left as-is.
+    # overlapping segments merge. Partial overlaps are left as-is.
     merge_common_cuts: bool = False
     # Inch rulers along the top/left edges (reference layer, never cut). Used
     # by the web UI's preview so layouts can be checked against real stock.
     draw_rulers: bool = False
     # Dashed reference outline of a custom sheet shape. On in the web preview
-    # only -- laser-ready exports must contain nothing but cuts and labels.
+    # only, since laser-ready exports must contain nothing but cuts and labels.
     draw_boundary: bool = False
     debug_borders: bool = False
     debug_color: str = "#1e90ff"        # part bounding boxes + sheet outline

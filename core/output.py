@@ -1,7 +1,5 @@
 """Write SVGsm and the JSON placement summary."""
 
-from __future__ import annotations
-
 import json
 import re
 import xml.etree.ElementTree as ET
@@ -34,7 +32,7 @@ def safe_xml_id(text: str) -> str:
 
 
 class SvgSheetWriter:
-    """Renders a single :class:`SheetLayout` to an SVG file."""
+    """Renders a single ``SheetLayout`` to an SVG file."""
 
     def __init__(self, options: OutputOptions) -> None:
         self.options = options
@@ -43,10 +41,10 @@ class SvgSheetWriter:
     def _cut_stroke_style(self, color: str) -> str:
         """Stroke style for laser-relevant vector lines. 'hairline' emits an
         Inkscape hairline (~0.001 in wide) so print-driver laser workflows
-        recognise the line as a cut; a number sets an explicit px width."""
+        recognise the line as a cut. A number sets an explicit px width."""
         cs = self.options.cut_stroke
         if isinstance(cs, str) and cs.lower() == "hairline":
-            # 0.096 px == 0.001 in at 96 px/in; -inkscape-stroke keeps it a
+            # 0.096 px == 0.001 in at 96 px/in. -inkscape-stroke keeps it a
             # true hairline on screen and when printed from Inkscape.
             return (
                 f"fill:none;stroke:{color};stroke-opacity:1;"
@@ -73,7 +71,7 @@ class SvgSheetWriter:
         sheet_number: int,
         total_sheets: int,
     ) -> list[str]:
-        """Write the sheet SVG; return any label warnings (parts left unlabelled)."""
+        """Write the sheet SVG and return any label warnings (parts left unlabelled)."""
         options = self.options
         width_px = sheet.width * PX_PER_INCH
         height_px = sheet.height * PX_PER_INCH
@@ -239,7 +237,7 @@ class SvgSheetWriter:
     ) -> None:
         """Preview-only background: the sheet's usable material drawn as wood,
         everything outside a custom shape (and inside its blocked holes) in
-        near-black, so available space reads at a glance."""
+        near-black: available space reads at a glance."""
         layer = self._layer(root, "Preview background (not part of the job)", "preview_bg")
         ET.SubElement(
             layer,
@@ -273,7 +271,7 @@ class SvgSheetWriter:
             )
 
     def _write_boundary_layer(self, root: ET.Element, sheet: SheetSpec) -> None:
-        """Reference outline of a non-rectangular stock sheet -- dashed grey so
+        """Reference outline of a non-rectangular stock sheet, dashed grey so
         no laser convention treats it as a cut. Delete the layer before cutting
         if the laser software objects to extra geometry."""
         layer = self._layer(
@@ -303,7 +301,7 @@ class SvgSheetWriter:
 
         A segment's identity is its quantized endpoints (direction-insensitive)
         plus its midpoint, so a straight line and a curve between the same two
-        points never merge. Only exactly coincident segments merge; a long edge
+        points never merge. Only exactly coincident segments merge. A long edge
         overlapping two shorter collinear edges is left untouched."""
         from svgpathtools import Path as SvgPath
 
@@ -339,7 +337,7 @@ class SvgSheetWriter:
         return (xmax - xmin) * (ymax - ymin)
 
     def _holes_first(self, transformed: Any) -> Any:
-        """Reorder a path's subpaths smallest first, so interior holes are cut
+        """Reorder a path's subpaths smallest first. Interior holes are then cut
         before the outer boundary frees the part to shift."""
         from svgpathtools import Path as SvgPath
 
@@ -355,7 +353,7 @@ class SvgSheetWriter:
     @staticmethod
     def _travel_order(placements: list[Any]) -> list[Any]:
         """Nearest neighbour tour over part centres starting at the sheet
-        origin, so lasers that cut in document order waste less time moving
+        origin. Lasers that cut in document order waste less time moving
         the head between parts."""
         items = []
         for p in placements:
@@ -379,12 +377,12 @@ class SvgSheetWriter:
     ) -> None:
         """Kerf-compensated cut paths: the beam centreline is offset half a
         kerf outside the part (and inside its holes), so the finished piece
-        matches the drawing. Drawn from the sampled outline, so curves are
+        matches the drawing. Drawn from the sampled outline. Curves are
         faceted at the curve sampling step.
 
         With ``seen`` (common-line merging), coincident offset segments are
         emitted once. Two neighbouring offset outlines coincide when the part
-        spacing equals the kerf: each grows half a kerf into the gap, so both
+        spacing equals the kerf: each grows half a kerf into the gap and both
         beam centrelines land on the gap's midline."""
         from shapely.geometry import Polygon
         from svgpathtools import Line as SvgLine, Path as SvgPath
@@ -558,10 +556,10 @@ class SvgSheetWriter:
         height_px: float,
     ) -> None:
         """Non-cutting inspection layer:
-        blue   -- sheet outline + per-part bounding boxes
-        orange -- unusable edge-margin band
-        green  -- scrap cut-outs the nester may fill (hole-nesting)
-        purple -- concave pockets the nester may pack into
+        blue    sheet outline + per-part bounding boxes
+        orange  unusable edge-margin band
+        green   scrap cut-outs the nester may fill (hole-nesting)
+        purple  concave pockets the nester may pack into
         """
         opts = self.options
         debug_layer = self._layer(root, "Debug (do not cut)", "debug")
@@ -686,7 +684,7 @@ class SvgSheetWriter:
         legend_w_px = 2.1 * PX_PER_INCH
         legend_h_px = len(entries) * row_px + 2 * pad_px
 
-        # Prefer the free area right of the used footprint; fall back to below
+        # Prefer the free area right of the used footprint, falling back to below
         # it, else pin inside the top-left margin corner.
         used_max_x = max((placement_bounds(p)[2] for p in layout.placements), default=0.0)
         used_max_y = max((placement_bounds(p)[3] for p in layout.placements), default=0.0)
@@ -823,7 +821,7 @@ def save_scrap_outlines(
     shape for the next job.
 
     Placed parts are subtracted with their interior holes filled: once cut,
-    the scrap inside a part's cutout falls out of the sheet, so it is not
+    the scrap inside a part's cutout falls out of the sheet and is not
     reusable stock. A morphological opening drops slivers thinner than about
     0.06 in, which no part could use anyway."""
     from shapely.geometry import Polygon

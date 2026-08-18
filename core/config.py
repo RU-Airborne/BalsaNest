@@ -1,11 +1,9 @@
-"""Turn a JSON job file into a :class:`JobSpec`.
+"""Turn a JSON job file into a ``JobSpec``.
 
 Also handles the optional machine defaults file (``balsanest_defaults.json``),
 per-machine/shop settings that rarely change (sheet size, colours, stroke
 style, label conventions) live there once, and every job config only carries
 what is specific to that job. Job values always win over defaults."""
-
-from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -32,7 +30,7 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
 def load_defaults(*directories: Path) -> dict[str, Any]:
     """Load ``balsanest_defaults.json`` from the first directory that has one.
 
-    Job-specific keys (``parts``, ``output``) are ignored if present -- the
+    Job-specific keys (``parts``, ``output``) are ignored if present. The
     defaults file describes the machine and shop conventions, not a job."""
     for directory in directories:
         path = directory / DEFAULTS_FILENAME
@@ -120,6 +118,7 @@ def config_to_specs(config: dict[str, Any], config_dir: Path) -> JobSpec:
         max_sheets=int(max_sheets_raw) if max_sheets_raw is not None else None,
         allow_mirror=bool(sheet_cfg.get("allow_mirror", True)),
         compact=bool(sheet_cfg.get("compact", True)),
+        compress=bool(sheet_cfg.get("compress", True)),
         allow_nesting_in_holes=bool(sheet_cfg.get("allow_nesting_in_holes", True)),
         min_hole_area=float(sheet_cfg.get("min_hole_area", 0.02)),
         boundary=boundary,

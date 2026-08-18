@@ -10,6 +10,9 @@ Modular layout so each concern can be maintained (or replaced) independently:
     holes                   scrap cut-out detection + nesting
     nfp                     no-fit-polygon exact-contact candidate positions
     packing                 Nester: collision, compaction, greedy multi-pass
+    compress                shrink-and-repair pass over a finished layout
+    ga                      genetic algorithm over the insertion order
+    parallel                worker pool that packs a generation side by side
     capacity                up-front oversize / capacity checks
     labels                  LabelPlanner: inside-the-material raster labels
     output                  SvgSheetWriter + JSON summary
@@ -17,9 +20,8 @@ Modular layout so each concern can be maintained (or replaced) independently:
     cli                     wizard, argument parsing, run_job, main
 """
 
-from __future__ import annotations
-
 from .capacity import preflight_capacity, smallest_fitting_variant
+from .compress import compress_layout
 from .cli import build_arg_parser, interactive_specs, main, print_job, run_job
 from .config import (
     DEFAULTS_FILENAME,
@@ -67,8 +69,10 @@ from .output import (
     save_scrap_outlines,
     write_sheet_svg,
 )
-from .ga import ga_generations, optimize_layout_ga
+from .ga import default_population, ga_generations, optimize_layout_ga
+from .parallel import OrderPool, default_workers
 from .packing import (
+    finish_layout,
     Nester,
     candidate_coordinates,
     compact_toward_origin,
@@ -153,9 +157,14 @@ __all__ = [
     "pack_once",
     "score_layout",
     "polish_layout",
+    "compress_layout",
+    "finish_layout",
     "optimize_layout",
     "optimize_layout_ga",
     "ga_generations",
+    "default_population",
+    "default_workers",
+    "OrderPool",
     "heuristic_passes",
     # capacity
     "smallest_fitting_variant",

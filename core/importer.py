@@ -1,11 +1,9 @@
-"""Load a part file (SVG, DXF, or PDF) into a physically scaled :class:`LoadedPart`.
+"""Load a part file (SVG, DXF, or PDF) into a physically scaled ``LoadedPart``.
 
 Each format has its own importer class with the same ``load(request)``
-interface; all converge on svgpathtools paths and share :func:`_finalize_part`,
+interface. All converge on svgpathtools paths and share ``_finalize_part``,
 so the rest of the pipeline never knows the source format.
 """
-
-from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -104,9 +102,9 @@ def dedupe_identical_islands(
 
     SolidWorks drawings are often exported with the same part drawn two or more
     times (one per view). Nesting such a file as-is pins the copies rigidly at
-    their drawn offsets -- e.g. two supports forced 13 in apart, spanning the
+    their drawn offsets, e.g. two supports forced 13 in apart, spanning the
     whole sheet. When every disconnected island is a translated copy of the
-    same shape, keep only the origin-most one; quantities then count single
+    same shape, keep only the origin-most one. Quantities then count single
     physical pieces. Islands that genuinely differ are left untouched (they may
     be a deliberate multi-piece file), with a note so the user can split them.
     """
@@ -124,7 +122,7 @@ def dedupe_identical_islands(
         if kept_paths:
             note = (
                 f"file contains {len(islands)} identical disconnected copies of the "
-                f"same piece (a multi-view export); using one copy -- 'quantity' now "
+                f"same piece (a multi-view export). Using one copy. 'quantity' now "
                 f"counts single pieces. Re-export with a single view to silence this."
             )
             return keep, kept_paths, note
@@ -148,8 +146,8 @@ def repair_doubled_contours(
 ) -> tuple[Any, list[Any], Optional[str]]:
     """Collapse a drawing whose every contour is drawn twice down to one.
 
-    A tapered part -- a wing or stabiliser rib between two different stations --
-    has two different faces, so a drawing made from its 3D body carries both
+    A tapered part, a wing or stabiliser rib between two different stations,
+    has two different faces. A drawing made from its 3D body carries both
     outlines, a few thousandths of an inch apart. Every contour is doubled: the
     outline, and each lightening hole. The even-odd rule then reads the pair as
     a contour with another contour just inside it, i.e. a hairline ring of
@@ -158,11 +156,11 @@ def repair_doubled_contours(
 
     Rebuilding from the raw strokes with anything within ``weld_in`` welded
     together recovers the single contour set. Cut paths are replaced by the
-    welded ones too, so the laser stops cutting each line twice and the packed
+    welded ones too. The laser stops cutting each line twice and the packed
     geometry and the emitted paths cannot disagree.
 
     Only drawings that are genuinely doubled are touched, and the rebuild is
-    kept only if it still spans the same extents -- an open-contour part whose
+    kept only if it still spans the same extents. An open-contour part whose
     strokes are all thinner than the weld would otherwise vanish."""
     if weld_in <= 0:
         return geometry, paths, None
@@ -205,8 +203,8 @@ def repair_doubled_contours(
 
 
 class SvgPartImporter:
-    """Reads one SVG per :class:`PartRequest`. Stateless apart from the sampling
-    step, so a single instance can load an entire job."""
+    """Reads one SVG per ``PartRequest``. Stateless apart from the sampling
+    step. One instance can load a whole job."""
 
     def __init__(
         self, sample_step_in: float, weld_in: float = DEFAULT_WELD_IN
@@ -336,14 +334,14 @@ _UNIT_NAME_TO_INCH = {"in": 1.0, "mm": 1.0 / 25.4, "cm": 1.0 / 2.54}
 
 class DxfPartImporter:
     """Reads a DXF drawing (e.g. exported directly from SolidWorks) into a
-    :class:`LoadedPart`, so the SolidWorks -> Inkscape conversion step can be
+    ``LoadedPart``, so the SolidWorks -> Inkscape conversion step can be
     skipped entirely.
 
     Entities (LINE, ARC, CIRCLE, ELLIPSE, LWPOLYLINE, POLYLINE, SPLINE, ...)
     are flattened to fine polylines via ezdxf and re-expressed as svgpathtools
     paths, after which the entire SVG pipeline (stitching, hole detection,
     dedupe, exact bboxes, output transforms) applies unchanged. DXF is y-up and
-    SVG is y-down, so y is negated to keep the drawing visually identical."""
+    SVG is y-down: y is negated to keep the drawing visually identical."""
 
     def __init__(
         self, sample_step_in: float, weld_in: float = DEFAULT_WELD_IN
@@ -446,14 +444,14 @@ _PDF_POINTS_TO_INCH = 1.0 / 72.0
 
 class PdfPartImporter:
     """Reads a PDF drawing (e.g. exported directly from SolidWorks) into a
-    :class:`LoadedPart`.
+    ``LoadedPart``.
 
     Vector drawing commands (lines, cubic Beziers, rects, quads) are extracted
     with PyMuPDF and re-expressed as svgpathtools paths, after which the SVG
     pipeline (stitching, hole detection, dedupe, exact bboxes, output
     transforms) applies unchanged. PDF user space is 72 points per inch, so
     physical scale is exact for 1:1 exports. PyMuPDF reports coordinates
-    y-down like SVG, so no axis flip is needed.
+    y-down like SVG. No axis flip needed.
 
     Text is never part of the extracted geometry, which silently drops the
     SolidWorks text watermark ("SOLIDWORKS Educational Product..."). Vector
@@ -534,7 +532,7 @@ class PdfPartImporter:
         paths: list[Any] = []
         for drawing in drawings:
             # Fill-only white shapes are invisible ink (typically the page
-            # background rectangle) -- not cut geometry.
+            # background rectangle), not cut geometry.
             if drawing.get("type") == "f":
                 fill = drawing.get("fill")
                 if fill is not None and all(c >= 0.99 for c in fill):
@@ -651,16 +649,16 @@ def load_sheet_boundary(
     weld_in: float = DEFAULT_WELD_IN,
 ) -> tuple[Any, float, float]:
     """Load a stock-sheet outline drawing (SVG/DXF/PDF) into a shapely polygon
-    for :attr:`SheetSpec.boundary`.
+    for ``SheetSpec.boundary``.
 
-    The file is imported exactly like a part; the largest closed region becomes
-    the sheet outline (interior rings are kept as blocked areas -- defects or
-    pre-existing holes in the stock). Returns (polygon, width_in, height_in).
+    The file is imported exactly like a part, and the largest closed region becomes
+    the sheet outline. Interior rings are kept as blocked areas: defects, or
+    holes already in the stock. Returns (polygon, width_in, height_in).
 
     When the file declares a page/canvas size (SVG viewBox, PDF page), that
     size becomes the sheet width/height and the outline keeps its drawn
     position on the page, so laser alignment matches the original document.
-    DXF has no page, so the sheet falls back to the outline's bounding box
+    DXF has no page. The sheet falls back to the outline's bounding box
     with the polygon normalized to start at (0, 0)."""
     req = PartRequest(file=Path(file), quantity=1, grain="free", units=units)
     part = load_part(req, sample_step_in, weld_in)

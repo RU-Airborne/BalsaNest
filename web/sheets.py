@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Any, Optional
 
@@ -30,7 +28,10 @@ def set_outline_from_file(path: Optional[str], sheet_w: float, sheet_h: float):
     note = "<b>Custom sheet shape active</b>" + (
         f" ({holes} blocked hole(s))" if holes else ""
     )
-    state = {"kind": "file", "path": str(path), "w": w, "h": h}
+    # The WKT rides along with the path so a nesting run can draw the custom
+    # sheet on its very first frame, before it re-reads the drawing at the
+    # accuracy the user picked.
+    state = {"kind": "file", "path": str(path), "w": w, "h": h, "wkt": boundary.wkt}
     return (
         state,
         gr.update(value=boundary_html(boundary, w, h, note), visible=True),
@@ -54,7 +55,7 @@ def set_outline_from_drawing(editor_value: Any, sheet_w: float, sheet_h: float):
     mask = None
     if arr.ndim == 3 and arr.shape[2] >= 3:
         # Primary detection: anything that differs from the known graph-paper
-        # background is a painted stroke -- works for any brush colour, and
+        # background is a painted stroke. Works for any brush colour, and
         # the eraser restores the background so erased areas don't count.
         H, W = arr.shape[:2]
         bg = grid_background_array(float(sheet_w), float(sheet_h), W, H)
@@ -73,7 +74,7 @@ def set_outline_from_drawing(editor_value: Any, sheet_w: float, sheet_h: float):
         mask = arr.astype(float) < 120
     if mask.sum() < 25:
         raise gr.Error(
-            "The canvas looks empty -- paint the usable material with the "
+            "The canvas looks empty. Paint the usable material with the "
             "brush first (any colour that stands out from the white paper)."
         )
 
@@ -88,12 +89,12 @@ def set_outline_from_drawing(editor_value: Any, sheet_w: float, sheet_h: float):
         for y, x in zip(*np.nonzero(coarse))
     ]
     if not cells:
-        raise gr.Error("Could not trace a filled area -- use a bigger brush.")
+        raise gr.Error("Could not trace a filled area. Use a bigger brush.")
     poly = unary_union(cells)
     if isinstance(poly, MultiPolygon):
         poly = max(poly.geoms, key=lambda g: g.area)
     poly = poly.simplify(1.5 * f * max(sx, sy)).buffer(0)
-    # Simplify/buffer can nudge the shape a hair past the canvas edge; the
+    # Simplify/buffer can nudge the shape a hair past the canvas edge. The
     # sheet keeps its size, so clip rather than rescale.
     poly = poly.intersection(shp_box(0.0, 0.0, float(sheet_w), float(sheet_h)))
     if isinstance(poly, MultiPolygon):
@@ -101,7 +102,7 @@ def set_outline_from_drawing(editor_value: Any, sheet_w: float, sheet_h: float):
     minx, miny, maxx, maxy = poly.bounds
     shape_w, shape_h = maxx - minx, maxy - miny
     if shape_w < 0.5 or shape_h < 0.5:
-        raise gr.Error("The traced shape is under half an inch -- draw it larger.")
+        raise gr.Error("The traced shape is under half an inch. Draw it larger.")
 
     w, h = float(sheet_w), float(sheet_h)
     note = "<b>Drawn sheet shape active</b>"

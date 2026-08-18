@@ -3,13 +3,12 @@
     python webui.py            # http://127.0.0.1:7860
     python webui.py --port 8080 --host 0.0.0.0
 
-All UI code lives in the :mod:`web` package; this file only parses
+All UI code lives in the ``web`` package. This file only parses
 arguments and starts the server.
 """
 
-from __future__ import annotations
-
 import argparse
+import multiprocessing
 import os
 import tempfile
 from pathlib import Path
@@ -55,4 +54,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     main()

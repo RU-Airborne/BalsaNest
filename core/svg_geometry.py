@@ -1,7 +1,5 @@
 """SVG <-> shapely geometry helpers."""
 
-from __future__ import annotations
-
 import math
 import re
 import xml.etree.ElementTree as ET
@@ -24,8 +22,6 @@ from .errors import BalsaNestError
 from .models import LoadedPart, Placement
 
 
-# --- angle helpers -----------------------------------------------------------
-
 def normalize_angle(angle: float) -> float:
     value = angle % 360.0
     if abs(value - 360.0) < 1e-9 or abs(value) < 1e-9:
@@ -41,8 +37,6 @@ def dedupe_angles(angles: Iterable[float]) -> list[float]:
             result.append(a)
     return result
 
-
-# --- SVG scale parsing -------------------------------------------------------
 
 def parse_svg_length_inches(raw: Optional[str]) -> Optional[float]:
     if raw is None:
@@ -134,7 +128,7 @@ def mirror_path_x(path: Any) -> Any:
     svgpathtools cannot non-uniformly scale Arc segments, so we reflect each
     segment analytically instead. This keeps the mirror exact (no curve
     sampling) and matches the shapely collision geometry, which is mirrored the
-    same way. Reflection reverses orientation, so Arc sweep flags flip and the
+    same way. Reflection reverses orientation: Arc sweep flags flip and the
     Arc x-axis rotation negates.
     """
     from svgpathtools import Arc, CubicBezier, Line, Path as SvgPath, QuadraticBezier
@@ -169,8 +163,6 @@ def mirror_path_x(path: Any) -> Any:
             )
     return SvgPath(*segments)
 
-
-# --- collision geometry sampling --------------------------------------------
 
 def sample_subpath_points(
     subpath: Any,
@@ -267,7 +259,7 @@ def duplicated_line_stats(
         return 0.0, 0.0
 
     # A stroke may poke a little way out of the cover without being genuine
-    # geometry -- the two copies splay apart at the ends of the taper.
+    # geometry: the two copies splay apart at the ends of the taper.
     slack = 2.0 * weld_in
     duplicated = 0.0
     max_gap = 0.0
@@ -335,8 +327,8 @@ def geometry_to_paths(
     """One closed svgpathtools path per ring of a shapely geometry, expressed
     back in the source drawing's user units.
 
-    Used after a weld, so the cut paths that reach the laser are the same single
-    contours the nester packed -- not the doubled strokes they were rebuilt
+    Used after a weld. The cut paths reaching the laser are then the same single
+    contours the nester packed, not the doubled strokes they were rebuilt
     from."""
     from svgpathtools import Line, Path as SvgPath
 
@@ -421,7 +413,7 @@ def build_collision_geometry(
 
     Closed contours are XOR-combined so nested contours become holes. Open
     fragments are first stitched end-to-end into rings (segment-soup CAD
-    exports); whatever genuinely stays open is buffered by a tiny
+    exports). Whatever genuinely stays open is buffered by a tiny
     sampling-scale amount and unioned in.
     """
     closed_polygons: list[Any] = []
@@ -498,8 +490,6 @@ def build_collision_geometry(
 
     return occupied
 
-
-# --- exact vector transforms (placement + output) ---------------------------
 
 def path_to_local_inches(part: LoadedPart, path: Any) -> Any:
     p = path.translated(complex(-part.viewbox_min_x, -part.viewbox_min_y))

@@ -10,8 +10,6 @@ font. Parts that cannot hold even a minimum size label are skipped and reported
 as warnings.
 """
 
-from __future__ import annotations
-
 import math
 import re
 from dataclasses import dataclass, field
@@ -28,7 +26,7 @@ LABEL_LINE_SPACING = 1.2  # line height as a multiple of font size
 
 # Conservative average character advance per font, as a multiple of the font
 # size, used to size the text block before any renderer sees the file. Keys
-# are lowercase font family names; unknown fonts fall back to the constant.
+# are lowercase font family names. Unknown fonts fall back to the constant.
 LABEL_FONT_WIDTH_RATIOS = {
     "sans-serif": LABEL_CHAR_WIDTH_RATIO,
     "arial": 0.60,
@@ -42,7 +40,7 @@ LABEL_FONT_WIDTH_RATIOS = {
 
 @dataclass
 class LabelSpec:
-    """A planned label. ``text`` is the full name (for compatibility); ``lines``
+    """A planned label. ``text`` is the full name, kept for compatibility, and ``lines``
     holds the wrapped lines actually rendered."""
 
     text: str
@@ -72,7 +70,7 @@ def _largest_polygon(geom: Any) -> Optional[Any]:
 def _pole_of_inaccessibility(poly: Any, iterations: int = 20) -> tuple[float, float, float]:
     """Return (cx, cy, clearance) for the interior point farthest from the
     boundary. Found by binary-searching the largest inward buffer that stays
-    non-empty -- robust for frames, tapered airfoils and holed ribs alike."""
+    non-empty. Robust for frames, tapered airfoils and holed ribs alike."""
     min_x, min_y, max_x, max_y = poly.bounds
     lo, hi = 0.0, 0.5 * min(max_x - min_x, max_y - min_y)
     center = poly.representative_point()
@@ -94,7 +92,7 @@ def _pole_of_inaccessibility(poly: Any, iterations: int = 20) -> tuple[float, fl
 
 def _wrap(text: str, n_lines: int) -> list[str]:
     """Split ``text`` into at most ``n_lines`` lines, balancing length. Splits on
-    separators first; hard-splits a single long token when needed."""
+    separators first, and hard-splits a single long token when needed."""
     n_lines = max(1, n_lines)
     if n_lines == 1:
         return [text]
@@ -137,7 +135,7 @@ class LabelPlanner:
         return [spec for _, spec in pairs], warnings
 
     def plan_pairs(self, layout: SheetLayout) -> tuple[list[tuple[Any, LabelSpec]], list[str]]:
-        """Like :meth:`plan`, but keeps each spec linked to its placement so the
+        """Like ``plan``, but keeps each spec linked to its placement so the
         writer can group a part's label with its cut paths."""
         planned: list[tuple[Any, LabelSpec]] = []
         warnings: list[str] = []
@@ -230,7 +228,7 @@ class LabelPlanner:
         font: float,
     ) -> tuple[float, float, float]:
         """Slide the block to the middle of its feasible x/y range and retry a
-        bigger font; the anchor rarely sits centred in the free space, so a
+        bigger font. The anchor rarely sits centred in the free space, so a
         couple of recentering rounds usually buys extra size for free."""
         for _ in range(2):
             w, h = self._block_dims(lines, font)
@@ -252,8 +250,8 @@ class LabelPlanner:
         label: str,
         max_lines: int,
     ) -> Optional[tuple[float, list[str]]]:
-        # Single word: keep it on one line if it fits at all -- hard-splitting
-        # a word ("bul/khe/ad") reads badly. Only stack it when one line is
+        # Single word: keep it on one line if it fits at all, because
+        # hard-splitting a word ("bul/khe/ad") reads badly. Only stack it when one line is
         # impossible, and then use the fewest lines that fit.
         one = self._max_font(poly, prepared, cx, cy, [label])
         if one is not None:
@@ -283,7 +281,7 @@ class LabelPlanner:
         if not candidates:
             return None
         # Prefer the fewest lines that stays within 20% of the largest achievable
-        # font, so wide parts keep a clean single line and only cramped parts
+        # font. Wide parts keep a clean single line and only cramped parts
         # stack onto extra (word-boundary) lines.
         best_font = max(f for _, f, _ in candidates)
         for _, font, lines in sorted(candidates, key=lambda c: c[0]):
@@ -324,9 +322,9 @@ class LabelPlanner:
         return lo
 
     # Never band labels whose blocks are farther apart than this horizontally:
-    # a raster pass sweeps the band's full x-span, so banding two labels on
+    # a raster pass sweeps the band's full x-span. Banding two labels on
     # opposite ends of the sheet would drag the head across the whole board on
-    # every raster line -- slower than two separate short bands.
+    # every raster line, which is slower than two separate short bands.
     _BAND_MAX_GAP_IN = 6.0
 
     def _feasible_y_interval(
@@ -334,8 +332,8 @@ class LabelPlanner:
     ) -> tuple[float, float]:
         """How far the label centre can slide vertically (at fixed x) while the
         block stays inside the part. Labels are free to move anywhere in this
-        interval -- identical parts may end up with labels at different heights
-        if that lets each join a nearby neighbour's raster band."""
+        interval. Identical parts may end up with labels at different
+        heights if that lets each join a nearby neighbour's raster band."""
 
         def fits(y: float) -> bool:
             return poly.contains(_block(cx, y, w, h))
@@ -359,7 +357,7 @@ class LabelPlanner:
     def _feasible_x_interval(
         self, poly: Any, cx: float, cy: float, w: float, h: float
     ) -> tuple[float, float]:
-        """Horizontal counterpart of :meth:`_feasible_y_interval`."""
+        """Horizontal counterpart of ``_feasible_y_interval``."""
 
         def fits(x: float) -> bool:
             return poly.contains(_block(x, cy, w, h))
@@ -382,8 +380,8 @@ class LabelPlanner:
 
     def _align_bands(self, planned: list[tuple[Any, LabelSpec]]) -> None:
         """Group labels onto shared horizontal raster bands to minimise engrave
-        time. Lasers raster horizontally and move slowly in y, so fewer bands is
-        faster -- but only when the banded labels are horizontally close, since
+        time. Lasers raster horizontally and move slowly in y: fewer bands is
+        faster, but only when the banded labels are horizontally close, since
         each raster line sweeps the band's whole x-span.
 
         Each label may slide anywhere in its feasible vertical range (staying

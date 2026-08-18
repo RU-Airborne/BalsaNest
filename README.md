@@ -265,7 +265,7 @@ only opened up later.
 
 **Save job** bundles everything on the page, which includes the part drawings themselves,
 their quantities and grain settings, the sheet, any custom shape, and every
-setting — into one JSON file. **Load job** restores it exactly as it was, so
+setting, into one JSON file. **Load job** restores it exactly as it was, so
 a project survives browser refreshes and moves between machines.
 
 ### Running it
@@ -294,7 +294,7 @@ cuts-only twin (`nest_cuts_only*.svg`) and a leftover-material outline
   software imports at 100%.
 - The **JSON summary** lists every placement (position, rotation, mirrored or
   not, which cut-out it was nested into) and the material utilization per
-  sheet — handy for records or scripting.
+  sheet, handy for records or scripting.
 
 ## How it works
 

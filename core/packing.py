@@ -3,21 +3,22 @@ multi-pass packing and scoring.
 
 Candidate positions come from three complementary generators: bounding box
 contact lines (cheap, axis-aligned), scrap-hole / concave-pocket seeds
-(:mod:`.holes`) and true no-fit-polygon contact positions (:mod:`.nfp`, always
+(``holes``) and true no-fit-polygon contact positions (``nfp``, always
 on, with a per-pair graceful fallback). All public functions operate on plain
 shapely geometry so this module can still be replaced wholesale behind the
-same :class:`Nester` interface without disturbing import/output.
+same ``Nester`` interface without disturbing import/output.
 """
-
-from __future__ import annotations
 
 import math
 import random
+from bisect import insort
 from typing import Any, Optional, Sequence
 
-from shapely.affinity import translate as shp_translate
+import numpy as np
+from shapely import transform as shp_transform
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry import box as shp_box
+from shapely.ops import unary_union
 from shapely.prepared import prep
 
 from .constants import EPS
@@ -36,8 +37,19 @@ from .models import (
 )
 from .nfp import nfp_candidate_seeds
 
+_CAVITY_EVAL_QUOTA = 4
+_CAVITY_SEED_CAP = 24
 
-# --- collision ---------------------------------------------------------------
+
+def shp_translate(geom: Any, xoff: float = 0.0, yoff: float = 0.0) -> Any:
+    # Was:
+    #     from shapely.affinity import translate as shp_translate
+    # which builds a full affine matrix per call. Shifting the coordinate array
+    # is 2.1x faster on a 256-vertex rib and bit-identical. Packing one sheet
+    # does about 23k of these.
+    offset = np.array([xoff, yoff], dtype=float)
+    return shp_transform(geom, lambda coords: coords + offset)
+
 
 def sheet_usable_region(sheet: SheetSpec) -> Optional[tuple[Any, Any]]:
     """(region, prepared_region) of a polygonal sheet's margin-shrunk interior,
@@ -91,8 +103,8 @@ def bbox_farther_than_spacing(
 
 def _filled_geometry(geom: Any) -> Any:
     """The part with its interior holes filled in (outer boundary only). Used to
-    treat cut-outs as solid when hole-nesting is disabled, so a part can never
-    incidentally settle inside another part's cut-out."""
+    treat cut-outs as solid when hole-nesting is disabled. Nothing can then
+    settle inside another part's cut-out by accident."""
     if isinstance(geom, Polygon):
         return Polygon(geom.exterior)
     if isinstance(geom, MultiPolygon):
@@ -131,8 +143,6 @@ def is_collision_free(
     return True
 
 
-# --- candidate positions -----------------------------------------------------
-
 def placement_key_from_bounds(
     bounds: tuple[float, float, float, float],
     sheet: SheetSpec,
@@ -140,11 +150,11 @@ def placement_key_from_bounds(
 ) -> tuple:
     """Ranking key for a candidate position (smaller is better).
 
-    Primary criterion (when ``union`` -- the bbox of everything already placed
-    on the sheet -- is given): the area of the combined bounding box after
+    Primary criterion, when ``union`` (the bbox of everything already placed
+    on the sheet) is given: the area of the combined bounding box after
     adding this candidate. That makes "keep the total footprint as small as
-    possible" the packer's actual objective, so parts cluster into one compact
-    block and the leftover stock stays in one usable piece instead of being
+    possible" the packer's actual objective. Parts cluster into one block and
+    the leftover stock stays in one usable piece instead of being
     split by parts scattered to opposite ends of the sheet.
 
     Tie-breaks: progress along the long axis, then the short axis, then tuck
@@ -177,27 +187,48 @@ def placed_union_bounds(placed: Sequence[Placement]) -> Optional[tuple[float, fl
     )
 
 
-def _convex_hull_pts(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    """Andrew's monotone chain. Pure Python: called per candidate in the hot
-    ranking loop, where building shapely objects is ~1000x more expensive."""
-    pts = sorted(set(points))
-    if len(pts) <= 2:
-        return pts
-
-    def cross(o, a, b):
-        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+def _hull_of_sorted(pts: Sequence[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Andrew's monotone chain over points that are already in sorted order."""
+    n = len(pts)
+    if n <= 2:
+        return list(pts)
 
     lower: list[tuple[float, float]] = []
+    size = 0
     for p in pts:
-        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
-            lower.pop()
+        px, py = p
+        while size >= 2:
+            ox, oy = lower[-2]
+            ax, ay = lower[-1]
+            if (ax - ox) * (py - oy) - (ay - oy) * (px - ox) <= 0:
+                lower.pop()
+                size -= 1
+            else:
+                break
         lower.append(p)
+        size += 1
+
     upper: list[tuple[float, float]] = []
-    for p in reversed(pts):
-        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
-            upper.pop()
-        upper.append(p)
+    size = 0
+    for i in range(n - 1, -1, -1):
+        px, py = pts[i]
+        while size >= 2:
+            ox, oy = upper[-2]
+            ax, ay = upper[-1]
+            if (ax - ox) * (py - oy) - (ay - oy) * (px - ox) <= 0:
+                upper.pop()
+                size -= 1
+            else:
+                break
+        upper.append((px, py))
+        size += 1
+
     return lower[:-1] + upper[:-1]
+
+
+def _convex_hull_pts(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Convex hull of an unordered point set, as hull vertices in order."""
+    return _hull_of_sorted(sorted(set(points)))
 
 
 def _hull_area(hull: list[tuple[float, float]]) -> float:
@@ -231,31 +262,57 @@ def placed_hull_coords(placed: Sequence[Placement]) -> Optional[list[tuple[float
     return _convex_hull_pts(pts)
 
 
-def hull_area_with(hull_pts: list[tuple[float, float]], bounds: tuple[float, float, float, float]) -> float:
-    """Area of the convex hull of the placed cluster plus a candidate bbox.
+class ClusterHull:
+    """The convex hull of everything already on the sheet, kept in the form
+    the candidate ranking loop actually wants."""
 
-    This measures how much a position bloats the cluster outline: a candidate
-    tucked into an internal gap adds nothing, one sticking out past the
-    frontier adds a lot. Used as the secondary ranking criterion (after the
-    union-bbox area) so the packer actively fills gaps before growing."""
-    min_x, min_y, max_x, max_y = bounds
-    corners = [(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)]
-    return _hull_area(_convex_hull_pts(hull_pts + corners))
+    __slots__ = ("points", "sorted_points")
+
+    def __init__(self, points: list[tuple[float, float]]) -> None:
+        self.points = points
+        self.sorted_points = sorted(set(points))
+
+    def area_with(self, bounds: tuple[float, float, float, float]) -> float:
+        """Area of the hull of this cluster plus a candidate bounding box."""
+        min_x, min_y, max_x, max_y = bounds
+        merged = list(self.sorted_points)
+        for corner in (
+            (min_x, min_y),
+            (min_x, max_y),
+            (max_x, min_y),
+            (max_x, max_y),
+        ):
+            insort(merged, corner)
+        return _hull_area(_hull_of_sorted(merged))
+
+
+def placed_cluster_hull(placed: Sequence[Placement]) -> Optional[ClusterHull]:
+    """``ClusterHull`` for the current sheet, or None while it is empty."""
+    pts = placed_hull_coords(placed)
+    if not pts:
+        return None
+    return ClusterHull(pts)
+
+
+def hull_area_with(
+    hull: ClusterHull, bounds: tuple[float, float, float, float]
+) -> float:
+    return hull.area_with(bounds)
 
 
 def refined_placement_key(
     bounds: tuple[float, float, float, float],
     sheet: SheetSpec,
     union: Optional[tuple[float, float, float, float]],
-    hull_pts: Optional[list[tuple[float, float]]],
+    hull: Optional[ClusterHull],
 ) -> tuple:
     """Full ranking key: union-bbox area, then cluster convex-hull area, then
     the axis tie-breaks. Keeps the used stock a small rectangle first, and
     within that packs the parts into the tightest possible blob."""
     key = placement_key_from_bounds(bounds, sheet, union)
-    if hull_pts is None:
+    if hull is None:
         return (key[0], 0.0) + key[1:]
-    return (key[0], round(hull_area_with(hull_pts, bounds), 6)) + key[1:]
+    return (key[0], round(hull.area_with(bounds), 6)) + key[1:]
 
 
 def _cap_axis_lines(values: set[float], lower: float, upper: float, cap: int) -> list[float]:
@@ -283,7 +340,7 @@ def candidate_coordinates(
     # Polygonal sheets: the usable region's vertices are the contact corners a
     # part can tuck into (the origin corner may not even be inside the sheet).
     # Curvy outlines (a re-imported scrap sheet) carry thousands of sampled
-    # vertices, so simplify first -- the corners survive, the curve samples
+    # vertices. Simplify first: the corners survive, the curve samples
     # collapse, and candidates spread over the whole sheet.
     region_info = sheet_usable_region(sheet)
     if region_info is not None:
@@ -328,8 +385,8 @@ def candidate_coordinates(
     ordered = ordered[:max_seeds]
 
     # Guarantee a "start a fresh shelf at the frontier" seed survives the cap and
-    # is always evaluated first, so a filling sheet never spuriously spills onto
-    # a new sheet while its far end is still empty.
+    # is always evaluated first. Without it a half-filled sheet spills onto a
+    # new sheet while its own far end is still empty.
     frontier_seeds: list[tuple[float, float]] = []
     if placed:
         if sheet.width >= sheet.height:
@@ -379,8 +436,6 @@ def grid_coordinates(variant: Any, sheet: SheetSpec):
                 yield x, y
 
 
-# --- compaction --------------------------------------------------------------
-
 def _compaction_steps(sheet: SheetSpec) -> list[float]:
     coarse = max(sheet.usable_width, sheet.usable_height) / 5.0
     fine = max(min(sheet.spacing, sheet.grid_step) / 3.0, 0.008)
@@ -408,7 +463,7 @@ def compact_within_region(
     """Compact toward the origin corner while never leaving ``region``.
 
     Plain compaction moves in discrete jumps and only checks the destination,
-    so a coarse step can tunnel straight through a thin wall -- e.g. a tile
+    so a coarse step can tunnel straight through a thin wall, e.g. a tile
     escaping a scrap hole through its 1-in rail. Constraining every accepted
     step to keep the part's interior point inside the containing region makes
     hole packing airtight regardless of step size."""
@@ -440,7 +495,7 @@ def _variant_light_geometry(variant: Any) -> Any:
     compaction. Compaction translates the geometry at every slide step, which
     dominated runtime on dense CAD outlines. Because the light shape strictly
     contains the exact one, any position it can occupy is also valid for the
-    exact part -- compaction merely stops ~0.02 in short of perfect contact.
+    exact part, and compaction merely stops ~0.02 in short of perfect contact.
     Seed feasibility and the final placement always use exact geometry."""
     cached = getattr(variant, "_light_geom", None)
     if cached is not None:
@@ -467,10 +522,10 @@ def _compact_exact_via_light(
     region: Optional[Any] = None,
 ) -> Any:
     """Compact the light superset, then shift the exact geometry by the same
-    offset. Safe: superset-valid positions are exact-valid positions."""
+    offset. A position valid for the superset is valid for the exact outline."""
     light0 = _variant_light_geometry(variant)
     if light0 is variant.geometry:
-        # Simplification failed; fall back to compacting the exact geometry.
+        # No light outline: compact the exact geometry.
         if region is not None:
             return compact_within_region(geom, region, placed, sheet)
         return compact_toward_origin(geom, placed, sheet)
@@ -503,6 +558,25 @@ def _containing_scrap_hole(geom: Any, placed: Sequence[Placement], sheet: SheetS
     return None
 
 
+def is_enclosed_position(geom: Any, placed: Sequence[Placement], sheet: SheetSpec) -> bool:
+    """True when this geometry sits inside another part's scrap cut-out or
+    concave pocket, i.e. in stock that was already going to be waste."""
+    from .holes import placement_cavity_regions, placement_scrap_holes
+
+    try:
+        pt = geom.representative_point()
+    except Exception:
+        return False
+    for q in placed:
+        for hole in placement_scrap_holes(q, sheet):
+            if hole.contains(pt):
+                return True
+        for region in placement_cavity_regions(q, sheet):
+            if region.contains(pt):
+                return True
+    return False
+
+
 def compact_toward_origin(geom: Any, placed: Sequence[Placement], sheet: SheetSpec) -> Any:
     """Bottom-left compaction: slide the part toward the origin corner along the
     long axis first, then the short axis, using real geometry. Closes the gaps a
@@ -531,8 +605,6 @@ def compact_toward_origin(geom: Any, placed: Sequence[Placement], sheet: SheetSp
     return geom
 
 
-# --- placement / packing -----------------------------------------------------
-
 def _bbox_fits_sheet(
     x: float, y: float, w: float, h: float, sheet: SheetSpec, tol: float = 1e-7
 ) -> bool:
@@ -542,6 +614,21 @@ def _bbox_fits_sheet(
         and x + w <= sheet.width - sheet.margin + tol
         and y + h <= sheet.height - sheet.margin + tol
     )
+
+
+def _fits_some_cavity(variant: Any, placed: Sequence[Placement], sheet: SheetSpec) -> bool:
+    """Whether any placed part has a pocket whose bounding box could hold this
+    variant. A bbox test that over-reports, which is what a gate wants: cheap,
+    and it never hides a pocket that would have worked."""
+    for p in placed:
+        for region in placement_cavity_regions(p, sheet):
+            rminx, rminy, rmaxx, rmaxy = region.bounds
+            if (
+                variant.width <= rmaxx - rminx + EPS
+                and variant.height <= rmaxy - rminy + EPS
+            ):
+                return True
+    return False
 
 
 def find_placement(
@@ -555,8 +642,8 @@ def find_placement(
     """Best position for one item given everything already placed.
 
     Candidate ranking keys depend only on the candidate's bounding box, which is
-    known analytically from (x, y, w, h) -- so seeds are sorted BEFORE any
-    geometry work, and the part outline is translated (the expensive step for
+    known analytically from (x, y, w, h). That lets seeds be sorted BEFORE any
+    geometry work, with the part outline translated (the expensive step for
     dense CAD outlines) only until ``compact_top_k`` feasible candidates are
     found. This is what keeps 20-part sheets in seconds instead of minutes."""
     best: Optional[Placement] = None
@@ -566,9 +653,9 @@ def find_placement(
     evals = 0
     fill_holes = not sheet.allow_nesting_in_holes
     union = placed_union_bounds(placed)
-    hull_pts = placed_hull_coords(placed)
-    # NFP seeds are dense and mostly feasible; give the search room to
-    # actually reach the tight interior gaps they propose.
+    hull = placed_cluster_hull(placed)
+    # Dense, mostly-feasible NFP seeds need room to reach the tight interior
+    # gaps they propose.
     eval_budget = max(eval_budget, 3500)
     compact_top_k = max(compact_top_k, 6)
 
@@ -578,8 +665,8 @@ def find_placement(
             continue
 
         # A part that drops into another part's scrap cut-out consumes pure
-        # waste and adds nothing to the footprint, so any feasible hole
-        # placement beats every open-sheet placement outright -- it must not
+        # waste and adds nothing to the footprint. Any feasible hole placement
+        # beats every open-sheet placement outright. It must not
         # merely compete on the origin-distance key (it would lose to open
         # space near the origin and the cut-out would stay empty).
         if sheet.allow_nesting_in_holes:
@@ -602,8 +689,8 @@ def find_placement(
                 if not is_collision_free(geom, placed, sheet.spacing):
                     continue
                 found += 1
-                # Compact within the hole -- constrained so the part can never
-                # tunnel out through a wall -- snugging it against the hole's
+                # Compact within the hole, constrained so the part can never
+                # tunnel out through a wall, snugging it against the hole's
                 # origin-side corner / already-nested neighbours instead of
                 # floating mid-hole.
                 region = _containing_scrap_hole(geom, placed, sheet)
@@ -615,73 +702,90 @@ def find_placement(
                     b = geom.bounds
                     best_hole = Placement(item, variant, sheet_index, b[0], b[1], geom)
 
-        # Concave-pocket seeds join the normal ranking: pockets are ordinary
-        # stock, but bounding-box contact candidates never propose positions
-        # inside another part's hull, so an arch cavity would stay empty.
-        seeds = cavity_candidate_seeds(variant, placed, sheet) + candidate_coordinates(
-            variant, placed, sheet
-        )
-        # No-fit-polygon seeds are exact-contact positions along every placed
-        # part's spacing-inflated silhouette -- the tight spots (a disc
-        # nestling between two discs, mating slanted edges) that axis-aligned
-        # contact lines never propose. They compete on the same ranking.
-        if placed:
-            seeds = nfp_candidate_seeds(variant, placed, sheet) + seeds
-        cands = sorted(
-            (
-                (placement_key_from_bounds((x, y, x + w, y + h), sheet, union), x, y)
-                for x, y in dict.fromkeys(seeds)
-                if _bbox_fits_sheet(x, y, w, h, sheet)
-            ),
-            key=lambda t: t[0],
-        )
-
-        # Positions inside the current union bbox all tie on its area, so the
-        # bbox key alone cannot tell a gap-filling position from one that
-        # merely stretches the cluster sideways. Re-rank the analytic front by
-        # cluster-hull growth: gap fillers add no hull area and float to the
-        # top, frontier positions sink.
-        if hull_pts is not None and len(cands) > 1:
-            prefix = cands[:150]
-            prefix.sort(
-                key=lambda t: (
-                    t[0][0],
-                    round(hull_area_with(hull_pts, (t[1], t[2], t[1] + w, t[2] + h)), 6),
-                )
-                + t[0][1:]
+        def ranked_candidates(
+            seeds: Sequence[tuple[float, float]], rerank: bool = True
+        ) -> list:
+            """Seeds that fit the sheet, ordered by the analytic ranking key."""
+            cands = sorted(
+                (
+                    (placement_key_from_bounds((x, y, x + w, y + h), sheet, union), x, y)
+                    for x, y in dict.fromkeys(seeds)
+                    if _bbox_fits_sheet(x, y, w, h, sheet)
+                ),
+                key=lambda t: t[0],
             )
-            cands = prefix + cands[150:]
 
-        found = 0
-        for _, x, y in cands:
-            if found >= compact_top_k or evals >= eval_budget:
-                break
-            geom = shp_translate(variant.geometry, xoff=x, yoff=y)
-            evals += 1
-            if sheet.boundary is not None and not geometry_fits_sheet(geom, sheet):
-                continue
-            if not is_collision_free(geom, placed, sheet.spacing, fill_holes=fill_holes):
-                continue
-            found += 1
-            geom = _compact_exact_via_light(geom, variant, x, y, placed, sheet)
-            b = geom.bounds
-            key = refined_placement_key(b, sheet, union, hull_pts)
-            if best_key is None or key < best_key:
-                best_key = key
-                best = Placement(item, variant, sheet_index, b[0], b[1], geom)
+            if rerank and hull is not None and len(cands) > 1:
+                prefix = cands[:150]
+                prefix.sort(
+                    key=lambda t: (
+                        t[0][0],
+                        round(hull.area_with((t[1], t[2], t[1] + w, t[2] + h)), 6),
+                    )
+                    + t[0][1:]
+                )
+                cands = prefix + cands[150:]
+            return cands
 
-        if found:
+        def try_candidates(cands: Sequence, quota: int) -> int:
+            """Place-test candidates in order until ``quota`` of them come back
+            feasible. Returns how many were feasible."""
+            nonlocal best, best_key, evals
+            found = 0
+            for _, x, y in cands:
+                if found >= quota or evals >= eval_budget:
+                    break
+                geom = shp_translate(variant.geometry, xoff=x, yoff=y)
+                evals += 1
+                if sheet.boundary is not None and not geometry_fits_sheet(geom, sheet):
+                    continue
+                if not is_collision_free(
+                    geom, placed, sheet.spacing, fill_holes=fill_holes
+                ):
+                    continue
+                found += 1
+                geom = _compact_exact_via_light(geom, variant, x, y, placed, sheet)
+                b = geom.bounds
+                key = refined_placement_key(b, sheet, union, hull)
+                if best_key is None or key < best_key:
+                    best_key = key
+                    best = Placement(item, variant, sheet_index, b[0], b[1], geom)
+            return found
+
+        # Concave pockets are ordinary stock, connected to the rest of the
+        # sheet. Unlike scrap cut-outs they do not win outright, and are
+        # ranked against everything else on real geometry, in the same list.
+        cavity_seeds = cavity_candidate_seeds(variant, placed, sheet)
+
+        # No-fit-polygon seeds are exact-contact positions along every placed
+        # part's spacing-inflated silhouette. They are the tight spots (a disc
+        # nestling between two discs, mating slanted edges) that axis-aligned
+        # contact lines never propose.
+        open_seeds = cavity_seeds + candidate_coordinates(variant, placed, sheet)
+        if placed:
+            open_seeds = nfp_candidate_seeds(variant, placed, sheet) + open_seeds
+
+        cavity_found = 0
+        if cavity_seeds and _fits_some_cavity(variant, placed, sheet):
+            cavity_found = try_candidates(
+                ranked_candidates(cavity_seeds, rerank=False)[:_CAVITY_SEED_CAP],
+                _CAVITY_EVAL_QUOTA,
+            )
+
+        found = try_candidates(ranked_candidates(open_seeds), compact_top_k)
+
+        if found or cavity_found:
             continue
 
         # Fallback raster-like search for positions the contact candidates miss
         # (mostly relevant on a fresh sheet). Bounded by the evaluation budget.
         # On polygonal sheets, points whose bounding box leaves the usable
         # region are rejected with a cheap prepared-geometry test that does NOT
-        # consume the budget -- otherwise a big blocked area (the bite in a
+        # consume the budget. Otherwise a big blocked area (the bite in a
         # re-imported scrap sheet) burns the whole budget before the sweep
         # reaches open material. bbox containment is sufficient but not
-        # necessary, so this can only skip spots the contact/NFP candidates
-        # are responsible for anyway.
+        # necessary. Anything skipped here is a spot the contact and NFP
+        # candidates cover anyway.
         region_prepared = (
             sheet_usable_region(sheet)[1] if sheet.boundary is not None else None
         )
@@ -700,7 +804,7 @@ def find_placement(
                 continue
             geom = _compact_exact_via_light(geom, variant, x, y, placed, sheet)
             b = geom.bounds
-            key = refined_placement_key(b, sheet, union, hull_pts)
+            key = refined_placement_key(b, sheet, union, hull)
             if best_key is None or key < best_key:
                 best_key = key
                 best = Placement(item, variant, sheet_index, b[0], b[1], geom)
@@ -731,6 +835,42 @@ def item_metric(item: Item, mode: int, rng: random.Random) -> tuple:
 
     jitter = rng.random()
     return (-envelope * (0.92 + 0.16 * jitter), -area, jitter, item.uid)
+
+
+def largest_offcut(layout: SheetLayout, sheet: SheetSpec) -> float:
+    """Area of the biggest single piece of stock this layout leaves behind.
+
+    What a modeller actually wants back from a sheet is one usable board, not
+    the same area in eight slivers. The packing score cannot see that: it
+    measures the used bounding box, which on a rectangular sheet is a decent
+    stand-in and on a re-imported off-cut is nearly meaningless.
+    """
+    if not layout.placements:
+        return 0.0
+    cached = getattr(layout, "_offcut_cache", None)
+    key = id(layout.placements[-1]), len(layout.placements)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+
+    region_info = sheet_usable_region(sheet)
+    region = (
+        region_info[0]
+        if region_info is not None
+        else shp_box(
+            sheet.margin, sheet.margin,
+            sheet.width - sheet.margin, sheet.height - sheet.margin,
+        )
+    )
+    try:
+        taken = unary_union([p.geometry for p in layout.placements])
+        left = region.difference(taken.buffer(sheet.spacing / 2.0, quad_segs=1))
+        best = max(
+            (g.area for g in getattr(left, "geoms", [left])), default=0.0
+        )
+    except Exception:
+        best = 0.0
+    layout._offcut_cache = (key, best)
+    return best
 
 
 def score_layout(sheets: Sequence[SheetLayout], sheet: SheetSpec, unplaced_count: int = 0) -> tuple:
@@ -813,21 +953,32 @@ def pack_once(items: Sequence[Item], sheet: SheetSpec, mode: int, seed: int) -> 
     return pack_in_order(ordered, sheet)
 
 
-def polish_layout(result: LayoutResult, sheet: SheetSpec, sweeps: int = 2) -> LayoutResult:
+def polish_layout(
+    result: LayoutResult,
+    sheet: SheetSpec,
+    sweeps: int = 2,
+    should_stop: Optional[Any] = None,
+) -> LayoutResult:
     """Reinsertion polish: repeatedly pull each placed part out and re-place it
     with full knowledge of every other part's final position.
 
-    Greedy packing is sequential, so early parts are placed knowing nothing
-    about later ones -- a part can end up stretching the footprint while a
-    pocket or scrap hole that opens up later stays empty. Re-inserting each
-    part (footprint-boundary parts first, since they define the union bbox)
-    lets it migrate into those spots. A move is kept only when the global
-    layout score strictly improves, so the pass can only tighten the nest."""
+    Greedy packing is sequential: early parts are placed knowing nothing
+    about later ones. A part can end up stretching the footprint while a pocket
+    or scrap hole that opens up later stays empty. Re-inserting each part
+    (footprint-boundary parts first, since they define the union bbox) lets it
+    migrate into those spots. A move is kept only when the global layout score
+    strictly improves.
+
+    ``should_stop`` is polled between moves. Bailing out early costs
+    tightness, nothing else.
+    """
     if not result.sheets:
         return result
+    stop = should_stop or (lambda: False)
 
     for _ in range(sweeps):
         improved = False
+        changed = False
         current = score_layout(result.sheets, sheet, len(result.unplaced))
 
         moves: list[tuple[int, Placement]] = []
@@ -880,36 +1031,50 @@ def polish_layout(result: LayoutResult, sheet: SheetSpec, sweeps: int = 2) -> La
         moves.sort(key=boundary_priority)
 
         for si, p in moves:
+            if stop():
+                break
             layout = result.sheets[si]
             if p not in layout.placements:
                 continue
             layout.placements.remove(p)
+            was_enclosed = is_enclosed_position(p.geometry, layout.placements, sheet)
 
-            best_alt: Optional[tuple[tuple, Placement, int]] = None
+            best_alt: Optional[tuple[tuple, Placement, int, bool]] = None
             for sj, lay in enumerate(result.sheets):
                 cand = find_placement(p.item, lay.placements, sheet, sj)
                 if cand is None:
                     continue
+                enclosed = is_enclosed_position(cand.geometry, lay.placements, sheet)
                 lay.placements.append(cand)
                 sc = score_layout(result.sheets, sheet, len(result.unplaced))
                 lay.placements.remove(cand)
-                if best_alt is None or sc < best_alt[0]:
-                    best_alt = (sc, cand, sj)
+                # Break ties towards the enclosed spot. A part that could go
+                # either way lands in the waste rather than out on the stock.
+                rankable = (sc, 0 if enclosed else 1)
+                if best_alt is None or rankable < (best_alt[0], 0 if best_alt[3] else 1):
+                    best_alt = (sc, cand, sj, enclosed)
 
-            if best_alt is not None and best_alt[0] < current:
-                _, cand, sj = best_alt
+            gains_enclosure = (
+                best_alt is not None and best_alt[3] and not was_enclosed
+            )
+            if best_alt is not None and (
+                best_alt[0] < current or (gains_enclosure and best_alt[0] == current)
+            ):
+                _, cand, sj, _ = best_alt
                 result.sheets[sj].placements.append(cand)
+                if best_alt[0] < current:
+                    improved = True
                 current = best_alt[0]
-                improved = True
+                changed = True
             else:
                 layout.placements.append(p)  # restore original spot
 
-        # A sweep can empty a sheet entirely; drop it.
+        # A sweep can empty a sheet entirely. Drop it.
         non_empty = [l for l in result.sheets if l.placements]
         if non_empty:
             result.sheets = non_empty
 
-        if not improved:
+        if not (improved or changed) or stop():
             break
 
     # The tightened layout may now have room for parts that never fit.
@@ -938,9 +1103,9 @@ def _snap_cluster_to_margin(layout: SheetLayout, sheet: SheetSpec) -> None:
 
     The packing score is bounding-box area, which is position-independent, so
     a polish sweep can tighten an interlock while the cluster as a whole
-    drifts off the corner -- and nothing else pulls it back. A rigid
-    translation preserves every relative gap, so it is always legal on a
-    rectangular sheet; on a polygonal sheet the snap (then each single axis)
+    drifts off the corner, and nothing else pulls it back. A rigid
+    translation preserves every relative gap and is always legal on a
+    rectangular sheet. On a polygonal sheet the snap, then each single axis,
     is applied only if the moved cluster still fits the usable region."""
     if not layout.placements:
         return
@@ -973,8 +1138,8 @@ def heuristic_passes(
 ):
     """Generator yielding ``(pass_index, best_so_far)`` after each heuristic
     packing pass, with the same early-stopping rule as
-    :func:`optimize_layout`. Lets front-ends stream a live preview per pass.
-    The caller should run :func:`polish_layout` on the final result."""
+    ``optimize_layout``. Lets front-ends stream a live preview per pass.
+    The caller should run ``polish_layout`` on the final result."""
     best: Optional[LayoutResult] = None
 
     # Always run the distinct deterministic heuristics (modes 0-3) at least once,
@@ -1009,7 +1174,28 @@ def optimize_layout(
             on_pass(pass_index, sheet.passes)
 
     assert best is not None
-    return polish_layout(best, sheet)
+    return finish_layout(best, sheet, seed=seed)
+
+
+def finish_layout(
+    result: LayoutResult,
+    sheet: SheetSpec,
+    seed: int = 42,
+    should_stop: Optional[Any] = None,
+) -> LayoutResult:
+    """Polish, then squeeze. The two tail passes every front end wants.
+
+    Kept together so the CLI, the web UI and optimize_layout cannot drift on
+    which of them they remember to run.
+    """
+    result = polish_layout(result, sheet, should_stop=should_stop)
+    if sheet.compress:
+        from .compress import compress_layout
+
+        result = compress_layout(
+            result, sheet, seed=seed, should_stop=should_stop
+        )
+    return result
 
 
 class Nester:

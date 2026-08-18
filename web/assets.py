@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from base64 import b64encode
 from pathlib import Path
 
@@ -90,7 +88,7 @@ def footer_html() -> str:
 CSS = """
 .gradio-container { max-width: 1440px !important; margin: 0 auto !important; }
 /* Accent-red glow tracing the logo silhouette, breathing slowly. Layered
-   drop-shadows follow the PNG's alpha edge, so the glow reads as backlight
+   drop-shadows follow the PNG's alpha edge. The glow reads as backlight
    on the artwork rather than a shape parked behind it. The header containers
    must not clip the shadow bleed. */
 #header-row, #header-row .block, #header-row .html-container,
@@ -116,7 +114,7 @@ CSS = """
   opacity: 1;
 }
 /* Bug-report line closing the page. Gradio's own footer is hidden further
-   down, so this is a plain div rather than a <footer>. */
+   down. This is a plain div rather than a <footer>. */
 .site-footer {
   margin: 22px 0 6px;
   padding-top: 14px;
@@ -258,7 +256,7 @@ def accent_hue() -> gr.themes.Color:
 
 def app_theme() -> gr.themes.Base:
     """The dark theme, deliberately darker and neutral rather than the blue-grey
-    Gradio ships. `zinc` drops most of slate's blue cast; the explicit fills go
+    Gradio ships. `zinc` drops most of slate's blue cast, and the explicit fills go
     darker still and carry a touch of warmth (red channel a shade above blue),
     so the page sits under the accent red and the nest browns instead of
     fighting them."""
@@ -276,8 +274,6 @@ def app_theme() -> gr.themes.Base:
         block_border_color_dark="#2f2d2b",
     )
 
-
-# --- option legends ----------------------------------------------------------
 
 def _wood_svg(
     w: int, h: int, vertical: bool = False, inner: str = "", grain: bool = True
@@ -311,8 +307,8 @@ def _legend_entry(thumb: str, caption: str) -> str:
 
 SHEET_GRAIN_HTML = (
     '<div class="legend-row" style="display:flex;gap:22px;margin:4px 0 2px;flex-wrap:wrap;justify-content:center">'
-    + _legend_entry(_wood_svg(120, 58), "x &mdash; grain runs left to right")
-    + _legend_entry(_wood_svg(120, 58, vertical=True), "y &mdash; grain runs bottom to top")
+    + _legend_entry(_wood_svg(120, 58), "x: grain runs left to right")
+    + _legend_entry(_wood_svg(120, 58, vertical=True), "y: grain runs bottom to top")
     + "</div>"
 )
 
@@ -368,7 +364,7 @@ LABEL_STYLE_HTML = (
 def font_preview_html(font: str) -> str:
     """Sample of the chosen label font on a wood chip, with a visible caution
     when the font is not the safe generic. The browser renders locally
-    installed fonts by family name, so any installed font previews."""
+    installed fonts by family name. Anything installed will preview."""
     family = "".join(c for c in (font or "sans-serif") if c not in "\"'<>&;")
     warning = ""
     if family != "sans-serif":
@@ -431,7 +427,7 @@ _TE_VIEW = "121 30.3 38 15.7"
 
 # The other shape doubling takes, on a corner: each straight edge is drawn
 # twice and a short line runs across between the two corner points. Material
-# lies below and left of the edges, so face A is the outer copy of both.
+# lies below and left of the edges. Face A is the outer copy of both.
 _CORNER_A = "M -10,9 L 44,9 L 56,45 L -10,45 Z"
 _CORNER_B = "M -10,15 L 37,15 L 49,51 L -10,51 Z"
 _CORNER_JOIN = "M 37,15 L 44,9"
@@ -441,7 +437,7 @@ _FACE_A_COLOR = "#c0392b"
 _FACE_B_COLOR = "#1f6feb"
 _JOIN_COLOR = "#2f3540"
 
-# Every panel is drawn at the width _legend_entry allows, so the row centres
+# Every panel is drawn at the width _legend_entry allows. The row centres
 # and keeps its gap instead of overflowing.
 _PANEL_W, _PANEL_H = 150, 62
 
@@ -458,7 +454,7 @@ def _outer_envelope_d(*d_strings: str) -> str:
     each point, i.e. the exterior of their union.
 
     Derived from the same paths the first panel draws, rather than drawn by
-    hand, so the legend cannot promise a result the importer would not produce."""
+    hand. The legend cannot promise a result the importer would not produce."""
     from shapely.geometry import Polygon
     from shapely.ops import unary_union
     from svgpathtools import parse_path
@@ -489,7 +485,7 @@ def _detail_svg(w: int, h: int, view: str, inner: str) -> str:
     """A wood chip cropped to `view` (an SVG viewBox), for magnified details.
 
     The corner radius and border are given in view units scaled to the panel's
-    pixel size, so the chip is drawn with the same 5px radius and 1px edge as
+    pixel size. The chip is drawn with the same 5px radius and 1px edge as
     the sheet thumbnails in the other legends however far the view is zoomed."""
     vx, vy, vw, vh = (float(v) for v in view.split())
     per_px = vw / float(w)
@@ -506,7 +502,7 @@ def _detail_svg(w: int, h: int, view: str, inner: str) -> str:
         f'<defs><clipPath id="{clip}"><rect {chip}/></clipPath></defs>'
         f'<rect {chip} fill="#c9a06c" stroke="#8a6a3f" '
         f'stroke-width="{per_px:.4g}"/>'
-        # Contours run off the edge of the crop, so they are clipped to the
+        # Contours run off the edge of the crop and are clipped to the
         # chip instead of poking past its rounded corners.
         f'<g clip-path="url(#{clip})">{inner}</g>'
         "</svg>"

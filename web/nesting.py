@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import tempfile
 from dataclasses import replace
 from pathlib import Path
@@ -12,13 +10,15 @@ from core import (
     OutputOptions,
     PartRequest,
     SheetSpec,
+    default_population,
+    default_workers,
+    finish_layout,
     ga_generations,
     heuristic_passes,
     layout_summary,
     load_part,
     load_sheet_boundary,
     make_items,
-    polish_layout,
     preflight_capacity,
     save_outputs,
     save_scrap_outlines,
@@ -30,7 +30,7 @@ from .previews import empty_sheet_viz, file_url, sheets_html
 
 
 def messages_html(messages: list[str]) -> str:
-    """Warnings in red and notes in amber, so they stand out from the page."""
+    """Warnings in red, notes in amber, both louder than the page around them."""
     import html as html_mod
 
     if not messages:
@@ -55,8 +55,8 @@ def build_viz(result, sheet, options, out_dir: Path, view: Optional[str] = None)
     (downloadable files keep the real laser strokes). Rulers are added as
     browser-side HTML around the image, not baked into the SVG.
 
-    ``view`` limits rendering to just "clean" or "debug" -- used by streamed
-    interim updates so each frame costs one SVG write, not two."""
+    ``view`` limits rendering to just "clean" or "debug". Streamed interim
+    updates use it so each frame costs one SVG write instead of two."""
     import uuid
 
     summary = layout_summary(result, sheet)
@@ -97,6 +97,7 @@ def run_nest(
     allow_mirror: bool,
     allow_holes: bool,
     allow_partial: bool,
+    compress: bool,
     grid_step: float,
     sample_step: float,
     weld: float,
@@ -125,9 +126,20 @@ def run_nest(
     messages: list[str] = []
     try:
         # Instant feedback: the red banner shows the moment Start is pressed,
-        # before any geometry work begins.
+        # before any geometry work begins. The outline state carries the traced
+        # shape as WKT precisely so this first frame can draw the custom sheet
+        # too. Re-reading the outline drawing here would be a file parse before
+        # anything appears, and drawing a full rectangle instead made the sheet
+        # visibly snap back to rectangular until the first pass finished.
         try:
-            placeholder_canvas = empty_sheet_viz(None, float(sheet_w), float(sheet_h))
+            preview_boundary = None
+            if outline and outline.get("wkt"):
+                from shapely import wkt as shp_wkt
+
+                preview_boundary = shp_wkt.loads(outline["wkt"])
+            preview_w = float(outline["w"]) if outline else float(sheet_w)
+            preview_h = float(outline["h"]) if outline else float(sheet_h)
+            placeholder_canvas = empty_sheet_viz(preview_boundary, preview_w, preview_h)
         except Exception:
             placeholder_canvas = ""
         yield (
@@ -165,6 +177,7 @@ def run_nest(
             max_sheets=None if int(max_sheets) <= 0 else int(max_sheets),
             allow_mirror=bool(allow_mirror),
             allow_nesting_in_holes=bool(allow_holes),
+            compress=bool(compress),
             boundary=boundary,
         )
         sheet.validate()
@@ -271,7 +284,7 @@ def run_nest(
 
         def step_update(best, banner_text):
             # Interim frames: render only the active view, without labels --
-            # a fraction of the cost of the final render, so streaming stays
+            # a fraction of the cost of the final render, which keeps streaming
             # snappy on large jobs.
             view = "debug" if flags.get("debug") else "clean"
             interim_opts = replace(options, label_parts=False)
@@ -292,51 +305,86 @@ def run_nest(
                 gr.update(),
             )
 
+        def stop_requested() -> bool:
+            return bool(flags.get("stop"))
+
         if use_ga and len(items) > 2:
             # Live evolution: show every generation's best layout until the
-            # user presses "Stop evolving" (the generation cap as a backstop).
-            gen_iter = ga_generations(items, sheet, seed=int(seed))
+            # user presses "Stop evolving". The generation cap is a backstop.
+            workers = default_workers(len(items))
+            pop = default_population(workers)
+            gen_iter = ga_generations(
+                items,
+                sheet,
+                seed=int(seed),
+                population=pop,
+                workers=workers,
+                should_stop=stop_requested,
+            )
             best = None
             gen = 0
             max_gens = max(1, int(passes))
+            where = (
+                f"{workers} at a time" if workers > 1 else "one at a time"
+            )
             yield status(
-                "EVOLVING &mdash; evaluating the starting population (several "
-                "complete layouts; this first step takes the longest)..."
+                f"EVOLVING: packing the starting population of {pop} layouts, "
+                f"{where}. The first preview is the heuristic's own best "
+                f"layout, and every generation after it can only improve."
             )
             while gen < max_gens:
-                best = next(gen_iter)
+                nxt = next(gen_iter, None)
+                if nxt is None:
+                    break  # stop requested part-way through a generation
+                best = nxt
                 gen += 1
                 yield step_update(
                     best,
-                    f"EVOLVING &mdash; generation {gen} / {max_gens} &middot; "
+                    f"EVOLVING: generation {gen} / {max_gens}, "
                     f"press <b>Stop evolving</b> to keep this layout",
                 )
-                if flags.get("stop"):
+                if stop_requested():
+                    break
+            gen_iter.close()
+            if best is None:
+                raise gr.Error(
+                    "Stopped before the first layout finished packing, so "
+                    "there is nothing to keep. Press Start again and give it "
+                    "until the first preview appears."
+                )
+            yield (
+                gr.update(), "*Polishing the best layout...*",
+                gr.update(), gr.update(), gr.update(), gr.update(),
+            )
+            # A stop request shortens the polish too. Every move in there is
+            # score-guarded, and cutting it short only costs tightness.
+            result = finish_layout(
+                best, sheet, seed=int(seed), should_stop=stop_requested
+            )
+            messages.append(
+                f"Genetic algorithm ran {gen} generation(s) "
+                f"of {pop} layouts each."
+            )
+        else:
+            if use_ga:
+                messages.append(
+                    "NOTE: with 2 or fewer parts there is nothing to evolve, so it "
+                    "used the heuristic optimizer instead."
+                )
+            total = max(1, int(sheet.passes))
+            best = None
+            yield status(f"OPTIMIZING: computing pass 1 / {total}...")
+            for i, best in heuristic_passes(items, sheet, seed=int(seed)):
+                yield step_update(best, f"OPTIMIZING: pass {i + 1} / {total}")
+                if stop_requested():
                     break
             yield (
                 gr.update(), "*Polishing the best layout...*",
                 gr.update(), gr.update(), gr.update(), gr.update(),
             )
-            result = polish_layout(best, sheet)
-            messages.append(f"Genetic algorithm ran {gen} generation(s).")
-        else:
-            if use_ga:
-                messages.append(
-                    "NOTE: with 2 or fewer parts there is nothing to evolve -- "
-                    "used the heuristic optimizer instead."
-                )
-            total = max(1, int(sheet.passes))
-            best = None
-            yield status(f"OPTIMIZING &mdash; computing pass 1 / {total}...")
-            for i, best in heuristic_passes(items, sheet, seed=int(seed)):
-                yield step_update(
-                    best, f"OPTIMIZING &mdash; pass {i + 1} / {total}"
-                )
-            yield (
-                gr.update(), "*Polishing the best layout...*",
-                gr.update(), gr.update(), gr.update(), gr.update(),
+            result = finish_layout(
+                best, sheet, seed=int(seed), should_stop=stop_requested
             )
-            result = polish_layout(best, sheet)
 
         if result.unplaced:
             counts: dict[str, int] = {}
@@ -386,7 +434,7 @@ def run_nest(
         if bool(label_parts) and bool(export_unlabeled):
             # Cut-only twins of every sheet, for re-cutting a part without
             # sitting through the engraving pass again. The summary JSON is
-            # identical, so only the SVGs are added.
+            # identical. Only the SVGs are added.
             plain_files, _ = save_outputs(
                 result, sheet, out_dir / "nest_cuts_only.svg",
                 replace(options, label_parts=False),

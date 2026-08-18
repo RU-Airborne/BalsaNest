@@ -1,6 +1,4 @@
-"""Upfront oversize checks, so a job that cannot fit fails early."""
-
-from __future__ import annotations
+"""Upfront oversize checks: a job that cannot fit fails before packing."""
 
 import math
 from typing import Optional, Sequence

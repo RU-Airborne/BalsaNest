@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import base64
 import json
 import tempfile
@@ -22,7 +20,8 @@ def save_job(
     sheet_w: float, sheet_h: float, grain_axis: str,
     margin: float, spacing: float, max_sheets: float,
     optimizer: str, passes: float, allow_mirror: bool, allow_holes: bool,
-    allow_partial: bool, grid_step: float, sample_step: float, weld: float,
+    allow_partial: bool, compress: bool,
+    grid_step: float, sample_step: float, weld: float,
     seed: float,
     label_parts: bool, export_unlabeled: bool, export_scrap: bool,
     label_mode: str, label_font: str,
@@ -79,7 +78,8 @@ def save_job(
         "nesting": {
             "optimizer": optimizer, "passes": int(passes),
             "allow_mirror": bool(allow_mirror), "allow_holes": bool(allow_holes),
-            "allow_partial": bool(allow_partial), "grid_step": float(grid_step),
+            "allow_partial": bool(allow_partial), "compress": bool(compress),
+            "grid_step": float(grid_step),
             "sample_step": float(sample_step), "weld_distance": float(weld),
             "seed": int(seed),
         },
@@ -102,7 +102,7 @@ def save_job(
 
 
 def load_job(path: Optional[str]):
-    """Restore a job file saved by :func:`save_job`. Returns updates in the
+    """Restore a job file saved by ``save_job``. Returns updates in the
     exact order of the load wiring in web/ui.py."""
     if not path:
         raise gr.Error("Choose a job file first.")
@@ -181,6 +181,7 @@ def load_job(path: Optional[str]):
         nest.get("optimizer", "Heuristic optimization (fast)"),
         int(nest.get("passes", 5)), bool(nest.get("allow_mirror", True)),
         bool(nest.get("allow_holes", True)), bool(nest.get("allow_partial", False)),
+        bool(nest.get("compress", True)),
         float(nest.get("grid_step", 0.04)), float(nest.get("sample_step", 0.015)),
         float(nest.get("weld_distance", DEFAULT_WELD_IN)),
         int(nest.get("seed", 42)),

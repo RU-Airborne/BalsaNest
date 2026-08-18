@@ -441,7 +441,7 @@ def test_tiny_part_skips_label():
 
 
 def test_multi_view_export_collapses_to_one_copy(tmp_path):
-    # The same 2x1 piece drawn twice, 5 in apart -- like a SolidWorks two-view
+    # The same 2x1 piece drawn twice, 5 in apart, like a SolidWorks two-view
     # export. The loader must keep one copy and note it, so the nester is free
     # to place pieces independently instead of pinning them 5 in apart.
     svg = tmp_path / "twoview.svg"
@@ -473,7 +473,7 @@ def test_distinct_islands_are_kept_with_note(tmp_path):
 
 def _doubled_taper_svg(tmp_path, name="doubled.svg"):
     """A 4x1 in part with a 0.5 in hole, every contour drawn twice a few
-    thousandths of an inch apart -- what a 3D export of a tapered rib looks
+    thousandths of an inch apart, which is what a 3D export of a tapered rib looks
     like, where the two faces of the part have slightly different profiles."""
     svg = tmp_path / name
     svg.write_text(
@@ -579,7 +579,7 @@ def test_weld_keeps_features_it_cannot_tell_apart_out_of_it(tmp_path):
 def test_concave_parts_interlock_like_tetris():
     # Two U-channels (4x3 outline, 2x2.5 pocket opening upward). Rotated 180°,
     # the second one's pocket faces down, so its centre bar can dip into the
-    # first one's pocket -- the "handshake". Interlocked, the pair's combined
+    # first one's pocket, the "handshake". Interlocked, the pair's combined
     # bbox is much smaller than side-by-side (8.05x3) or stacked (4x6.05).
     from shapely.affinity import rotate as shp_rotate, translate as shp_translate
     from shapely.geometry import Polygon
@@ -883,7 +883,7 @@ def test_nfp_seeds_touch_but_never_collide():
     for x, y in seeds:
         g = shp_translate(sq, x, y)
         # Superset-based NFPs guarantee every seed is feasible for the exact
-        # geometry -- no seed may violate the spacing.
+        # geometry, so no seed may violate the spacing.
         assert bn.is_collision_free(g, [pl], sheet.spacing)
         if g.distance(pl.geometry) < 0.15:
             touching += 1
@@ -1170,7 +1170,7 @@ def test_polygon_sheet_outline_layer_in_output(tmp_path):
 def test_labels_band_near_parts_but_not_across_sheet():
     # A and B sit side by side at different heights; their labels can slide
     # vertically, so they must land on ONE shared band. C is identical but far
-    # to the right -- banding it with A/B would sweep the raster head across
+    # to the right, so banding it with A/B would sweep the raster head across
     # the whole sheet, so its label must stay on its own level.
     a = _one_placement("part a", box(0.0, 0.0, 2.0, 3.0), 2.0, 3.0)
     b = _one_placement("part b", box(2.2, 0.8, 4.2, 3.8), 2.0, 3.0)

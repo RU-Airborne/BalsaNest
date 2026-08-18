@@ -1,10 +1,8 @@
 """Reasoning about scrap interior cutouts of placed parts.
 
-In this workflow every closed contour is a through-cut, so an interior ring is
+In this workflow every closed contour is a through-cut. An interior ring is
 material that gets removed as scrap. These helpers propose such positions.
 """
-
-from __future__ import annotations
 
 from typing import Any, Iterable, Sequence
 
@@ -56,14 +54,14 @@ def hole_candidate_seeds(
 ) -> list[tuple[float, float]]:
     """Lower-left seed positions for dropping a small part into a bigger part's
     scrap cut-out. Feasibility (real spacing to the hole edge) is confirmed later
-    by the normal collision test; here we only propose plausible spots.
+    by the normal collision test. Here we only propose plausible spots.
 
     Besides the hole's own corners, contact lines against parts already nested
     in the same hole are proposed, so successive parts pack shoulder-to-shoulder
     (and can interlock) instead of floating wherever the first seed landed.
-    Because every placement's holes are considered -- including placements that
-    are themselves nested inside something else -- scrap-in-scrap nesting
-    recurses naturally."""
+    Every placement's holes are considered, including placements that are
+    themselves nested inside something else. Scrap-in-scrap nesting recurses
+    naturally."""
     seeds: list[tuple[float, float]] = []
     for p in placed:
         for hole in placement_scrap_holes(p, sheet):
@@ -114,7 +112,7 @@ def hole_candidate_seeds(
 
 def _filled_exterior(geom: Any) -> Any:
     """The part's outer boundary with interior holes filled (holes are handled
-    separately as scrap; cavities are indentations of the outline itself)."""
+    separately as scrap, and cavities are indentations of the outline)."""
     if isinstance(geom, Polygon):
         return Polygon(geom.exterior)
     if isinstance(geom, MultiPolygon):
@@ -125,7 +123,7 @@ def _filled_exterior(geom: Any) -> Any:
 def placement_cavity_regions(placement: Placement, sheet: SheetSpec) -> list[Any]:
     """Concave pockets of a placed part: convex hull minus the (hole-filled)
     part, shrunk by the spacing. An arch-shaped bulkhead cutaway, an airfoil's
-    underside camber, a C-channel opening -- all usable room that plain
+    underside camber, a C-channel opening. All of it is usable room that plain
     bounding-box candidate seeds never look inside. Cached per placement."""
     cache = getattr(placement, "_cavity_cache", None)
     if cache is not None:
@@ -151,9 +149,9 @@ def cavity_candidate_seeds(
     variant: Variant, placed: Sequence[Placement], sheet: SheetSpec
 ) -> list[tuple[float, float]]:
     """Seed positions in and around placed parts' concave pockets. Unlike scrap
-    holes these are ordinary stock (connected to the rest of the sheet), so they
-    join the normal candidate ranking rather than winning outright -- but
-    without explicit seeds the search would never propose them.
+    holes these are ordinary stock, connected to the rest of the sheet. They
+    join the normal candidate ranking rather than winning outright. Without
+    explicit seeds the search would never propose them at all.
 
     Corner-aligned seeds are proposed even when the variant is BIGGER than the
     pocket: that is exactly the tetris/handshake case, where a second arch-shaped
